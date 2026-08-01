@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  frontend:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir frontend typecheck
+      - run: pnpm --dir frontend lint
+      - run: pnpm --dir frontend test
+      - run: pnpm --dir frontend build
+
+  rust:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      # The frontend isn't built in this job, but tauri_build::build() (in
+      # src-tauri/build.rs) still runs during `cargo check`/`clippy` and
+      # expects the icons it's pointed at in tauri.conf.json to exist.
+      - run: cargo fmt --check
+        working-directory: src-tauri
+      - run: cargo check --all-targets
+        working-directory: src-tauri
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: src-tauri
+      - run: cargo test
+        working-directory: src-tauri
+
+  # Full `tauri build` (signing, notarization, DMG) is deliberately not
+  # wired up here — see PRD/ARCHITECTURE.md M6. It needs Apple Developer
+  # credentials in repo secrets first; add a release workflow alongside
+  # that work rather than stubbing one out now.

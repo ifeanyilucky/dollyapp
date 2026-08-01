@@ -1,5 +1,6 @@
 [package]
 name = "dolly"
+default-run = "dolly"
 version = "0.1.0"
 description = "Automatic cinematic screen recording for macOS"
 authors = ["Dolly contributors"]
