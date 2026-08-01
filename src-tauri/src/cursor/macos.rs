@@ -138,18 +138,34 @@ fn install_global_monitor(
         let kind = unsafe { event.r#type() };
 
         let recorded = match kind {
-            NSEventType::LeftMouseDown => {
-                Some(CursorEvent::LeftDown { t, x: point.x, y: point.y })
-            }
-            NSEventType::LeftMouseUp => Some(CursorEvent::LeftUp { t, x: point.x, y: point.y }),
-            NSEventType::RightMouseDown => {
-                Some(CursorEvent::RightDown { t, x: point.x, y: point.y })
-            }
-            NSEventType::RightMouseUp => Some(CursorEvent::RightUp { t, x: point.x, y: point.y }),
+            NSEventType::LeftMouseDown => Some(CursorEvent::LeftDown {
+                t,
+                x: point.x,
+                y: point.y,
+            }),
+            NSEventType::LeftMouseUp => Some(CursorEvent::LeftUp {
+                t,
+                x: point.x,
+                y: point.y,
+            }),
+            NSEventType::RightMouseDown => Some(CursorEvent::RightDown {
+                t,
+                x: point.x,
+                y: point.y,
+            }),
+            NSEventType::RightMouseUp => Some(CursorEvent::RightUp {
+                t,
+                x: point.x,
+                y: point.y,
+            }),
             NSEventType::KeyDown => {
                 let code = unsafe { event.keyCode() };
                 let flags = unsafe { event.modifierFlags() };
-                Some(CursorEvent::Key { t, code, modifiers: modifier_names(flags) })
+                Some(CursorEvent::Key {
+                    t,
+                    code,
+                    modifiers: modifier_names(flags),
+                })
             }
             NSEventType::ScrollWheel => {
                 let dy = unsafe { event.scrollingDeltaY() };

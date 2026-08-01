@@ -36,7 +36,10 @@ fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(&frames_dir)?;
 
     println!("Dolly M0 sync spike");
-    println!("Recording {CAPTURE_SECONDS}s at {FPS}fps to {}", out_dir.display());
+    println!(
+        "Recording {CAPTURE_SECONDS}s at {FPS}fps to {}",
+        out_dir.display()
+    );
     println!("Click somewhere on screen a few times during the recording.");
 
     // The one clock both streams are timestamped against — see

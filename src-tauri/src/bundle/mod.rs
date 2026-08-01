@@ -6,8 +6,8 @@
 //! Keep the two in sync by hand; there is no codegen step (see
 //! ARCHITECTURE.md before adding one).
 
-mod meta;
 mod cursor_track;
+mod meta;
 mod writer;
 
 pub use cursor_track::{CursorEvent, CursorSample, CursorTrack, CursorType};

@@ -56,7 +56,11 @@ mod tests {
         let meta = RecordingMeta {
             version: RecordingMeta::CURRENT_VERSION,
             clock_epoch: 1_000_000,
-            display: DisplayInfo { width_px: 2560, height_px: 1440, scale_factor: 2.0 },
+            display: DisplayInfo {
+                width_px: 2560,
+                height_px: 1440,
+                scale_factor: 2.0,
+            },
             duration_us: 30_000_000,
             has_webcam: false,
             has_system_audio: false,
@@ -66,7 +70,12 @@ mod tests {
         writer.write_meta(&meta).unwrap();
 
         let mut track = CursorTrack::new(meta.clock_epoch);
-        track.samples.push(CursorSample { t: 0, x: 100.0, y: 200.0, cursor_type: CursorType::Arrow });
+        track.samples.push(CursorSample {
+            t: 0,
+            x: 100.0,
+            y: 200.0,
+            cursor_type: CursorType::Arrow,
+        });
         writer.write_cursor_track(&track).unwrap();
 
         let read_meta: RecordingMeta =
@@ -74,7 +83,8 @@ mod tests {
         assert_eq!(read_meta.clock_epoch, meta.clock_epoch);
 
         let read_track: CursorTrack =
-            serde_json::from_slice(&std::fs::read(bundle_path.join(names::CURSOR)).unwrap()).unwrap();
+            serde_json::from_slice(&std::fs::read(bundle_path.join(names::CURSOR)).unwrap())
+                .unwrap();
         assert_eq!(read_track.samples.len(), 1);
         assert_eq!(read_track.clock_epoch, meta.clock_epoch);
     }

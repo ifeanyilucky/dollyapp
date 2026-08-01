@@ -57,15 +57,41 @@ pub enum CursorType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum CursorEvent {
-    LeftDown { t: u64, x: f64, y: f64 },
-    LeftUp { t: u64, x: f64, y: f64 },
-    RightDown { t: u64, x: f64, y: f64 },
-    RightUp { t: u64, x: f64, y: f64 },
+    LeftDown {
+        t: u64,
+        x: f64,
+        y: f64,
+    },
+    LeftUp {
+        t: u64,
+        x: f64,
+        y: f64,
+    },
+    RightDown {
+        t: u64,
+        x: f64,
+        y: f64,
+    },
+    RightUp {
+        t: u64,
+        x: f64,
+        y: f64,
+    },
     /// Key *code* only — never the resolved character or text content.
     /// Keystroke display is a rendering feature, not a transcript.
-    Key { t: u64, code: u16, modifiers: Vec<String> },
-    Scroll { t: u64, dy: f64 },
+    Key {
+        t: u64,
+        code: u16,
+        modifiers: Vec<String>,
+    },
+    Scroll {
+        t: u64,
+        dy: f64,
+    },
     /// Written on pause/resume instead of splicing the video stream
     /// (ARCHITECTURE.md, Recorder section).
-    Gap { t: u64, resumed_at: Option<u64> },
+    Gap {
+        t: u64,
+        resumed_at: Option<u64>,
+    },
 }

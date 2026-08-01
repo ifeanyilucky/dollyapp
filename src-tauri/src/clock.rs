@@ -55,7 +55,9 @@ impl Clock {
     /// `RecordingMeta::clock_epoch`.
     #[cfg(target_os = "macos")]
     pub fn start() -> Self {
-        Self { epoch_us: ticks_to_us(raw_ticks()) }
+        Self {
+            epoch_us: ticks_to_us(raw_ticks()),
+        }
     }
 
     pub fn epoch_us(&self) -> u64 {

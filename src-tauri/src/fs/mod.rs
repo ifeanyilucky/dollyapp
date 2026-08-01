@@ -17,7 +17,11 @@ impl BundleReader {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
         if !root.join(names::META).exists() {
-            anyhow::bail!("{} is not a Dolly recording bundle (missing {})", root.display(), names::META);
+            anyhow::bail!(
+                "{} is not a Dolly recording bundle (missing {})",
+                root.display(),
+                names::META
+            );
         }
         Ok(Self { root })
     }
