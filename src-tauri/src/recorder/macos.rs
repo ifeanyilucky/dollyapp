@@ -39,6 +39,10 @@ struct CaptureOutcome {
 #[derive(Default)]
 pub struct RecorderState(Mutex<Option<ActiveRecording>>);
 
+pub fn is_recording(state: &RecorderState) -> bool {
+    state.0.lock().unwrap().is_some()
+}
+
 pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
     let mut guard = state.0.lock().unwrap();
     if guard.is_some() {

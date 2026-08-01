@@ -10,4 +10,4 @@
 mod macos;
 
 #[cfg(target_os = "macos")]
-pub use macos::{pause, resume, start, stop, RecorderState};
+pub use macos::{is_recording, pause, resume, start, stop, RecorderState};
