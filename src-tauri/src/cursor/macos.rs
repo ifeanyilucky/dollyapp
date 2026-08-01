@@ -43,7 +43,6 @@ impl CursorRecorder {
         let sampler_thread = {
             let samples = Arc::clone(&samples);
             let stop_flag = Arc::clone(&stop_flag);
-            let clock = clock;
             std::thread::Builder::new()
                 .name("dolly-cursor-sampler".into())
                 .spawn(move || run_sampler(clock, samples, stop_flag))

@@ -57,6 +57,6 @@ pub fn list_recordings(dir: &Path) -> Result<Vec<PathBuf>> {
         })
         .collect();
 
-    bundles.sort_by(|a, b| b.0.cmp(&a.0));
+    bundles.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
     Ok(bundles.into_iter().map(|(_, path)| path).collect())
 }
