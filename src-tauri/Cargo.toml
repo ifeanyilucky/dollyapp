@@ -37,7 +37,7 @@ mach2 = "0.4"
 # ScreenCaptureKit capture. Evaluate replacing with a hand-rolled objc2
 # binding if `scap` doesn't expose the low-level knobs §6 needs
 # (per-frame timestamps at mach_absolute_time resolution, showsCursor=false).
-scap = "0.1"
+scap = "0.0.8"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
