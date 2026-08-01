@@ -31,7 +31,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 objc2 = "0.5"
 objc2-foundation = "0.2"
 objc2-app-kit = "0.2"
+block2 = "0.5"
 core-graphics = "0.24"
+mach2 = "0.4"
 # ScreenCaptureKit capture. Evaluate replacing with a hand-rolled objc2
 # binding if `scap` doesn't expose the low-level knobs §6 needs
 # (per-frame timestamps at mach_absolute_time resolution, showsCursor=false).
