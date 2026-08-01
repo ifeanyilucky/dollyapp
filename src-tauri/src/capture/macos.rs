@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use anyhow::{anyhow, Result};
 use scap::capturer::{Capturer, Options, Resolution};
 use scap::frame::{Frame, FrameType};
@@ -21,9 +23,11 @@ pub struct CapturedFrame {
 }
 
 /// Pulls frames from `scap` at a fixed fps, stamping each with the shared
-/// `Clock`. Blocking: `capture_for` runs on the calling thread until the
-/// duration elapses, invoking `on_frame` synchronously for each frame so
-/// callers don't have to deal with buffering/backpressure themselves.
+/// `Clock`. Blocking: both capture methods run on the calling thread for
+/// their whole duration, invoking `on_frame` synchronously for each frame
+/// so callers don't have to deal with buffering/backpressure themselves —
+/// callers that need this off the main thread (the real recorder does)
+/// are expected to run it on a dedicated thread of their own.
 pub struct FrameGrabber {
     capturer: Capturer,
     clock: Clock,
@@ -57,16 +61,38 @@ impl FrameGrabber {
         Ok(Self { capturer, clock })
     }
 
+    /// Used by the M0 sync-spike binary, which wants a fixed-length clip
+    /// rather than start/stop control.
     pub fn capture_for(
         &mut self,
         duration: std::time::Duration,
+        on_frame: impl FnMut(CapturedFrame),
+    ) -> Result<()> {
+        let deadline = std::time::Instant::now() + duration;
+        self.run_while(|| std::time::Instant::now() < deadline, on_frame)
+    }
+
+    /// Used by the real recorder (`recorder` module): runs until
+    /// `stop_flag` is set from another thread. Checked between frames, so
+    /// stopping is bounded by roughly one frame interval, not instant —
+    /// fine for a "stop recording" click.
+    pub fn run_until_stopped(
+        &mut self,
+        stop_flag: &AtomicBool,
+        on_frame: impl FnMut(CapturedFrame),
+    ) -> Result<()> {
+        self.run_while(|| !stop_flag.load(Ordering::Relaxed), on_frame)
+    }
+
+    fn run_while(
+        &mut self,
+        mut keep_going: impl FnMut() -> bool,
         mut on_frame: impl FnMut(CapturedFrame),
     ) -> Result<()> {
         self.capturer.start_capture();
-        let deadline = std::time::Instant::now() + duration;
 
         let result = (|| -> Result<()> {
-            while std::time::Instant::now() < deadline {
+            while keep_going() {
                 let frame = self
                     .capturer
                     .get_next_frame()

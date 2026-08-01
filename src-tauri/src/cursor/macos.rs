@@ -1,8 +1,10 @@
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use anyhow::{anyhow, Result};
 use block2::RcBlock;
 use core_graphics::event::CGEvent;
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
@@ -77,6 +79,45 @@ impl CursorRecording for CursorRecorder {
         track.events = std::mem::take(&mut self.events.lock().unwrap());
         track
     }
+}
+
+thread_local! {
+    // `CursorRecorder` holds a `Retained<AnyObject>` (the NSEvent monitor
+    // token), which is `!Send` — it can never leave the thread it was
+    // created on. A `thread_local`, only ever touched from inside
+    // `run_on_main_thread` closures below, keeps the whole recording
+    // pinned to the main thread without smuggling the token across a
+    // channel or into `Send`-bound Tauri state.
+    static ACTIVE_RECORDER: RefCell<Option<CursorRecorder>> = const { RefCell::new(None) };
+}
+
+/// Starts cursor tracking, dispatched onto the main thread. Fire-and-forget
+/// — the recorder never needs to leave that thread, so there's nothing
+/// `Send`-safe to hand back to the caller. Pair with `stop_on_main_thread`.
+pub fn start_on_main_thread(app: &tauri::AppHandle, clock: Clock) -> Result<()> {
+    app.run_on_main_thread(move || {
+        ACTIVE_RECORDER.with(|cell| {
+            *cell.borrow_mut() = Some(CursorRecorder::start(clock));
+        });
+    })
+    .map_err(|e| anyhow!("failed to dispatch cursor start to main thread: {e}"))
+}
+
+/// Stops cursor tracking and returns the finished (plain-data, `Send`)
+/// `CursorTrack`. Errors if `start_on_main_thread` was never called or was
+/// already stopped.
+pub async fn stop_on_main_thread(app: &tauri::AppHandle) -> Result<CursorTrack> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    app.run_on_main_thread(move || {
+        let track = ACTIVE_RECORDER.with(|cell| cell.borrow_mut().take().map(CursorRecording::stop));
+        let _ = tx.send(track);
+    })
+    .map_err(|e| anyhow!("failed to dispatch cursor stop to main thread: {e}"))?;
+
+    rx.await
+        .map_err(|_| anyhow!("main thread dropped without responding to cursor stop"))?
+        .ok_or_else(|| anyhow!("no active cursor recording to stop"))
 }
 
 const SAMPLE_INTERVAL: Duration =
