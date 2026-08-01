@@ -1,0 +1,19 @@
+{
+  "name": "dolly",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Automatic cinematic screen recording for macOS",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "lint": "pnpm --dir frontend lint",
+    "typecheck": "pnpm --dir frontend typecheck"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  },
+  "packageManager": "pnpm@10.26.2"
+}
