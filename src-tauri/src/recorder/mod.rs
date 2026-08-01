@@ -11,3 +11,8 @@ mod macos;
 
 #[cfg(target_os = "macos")]
 pub use macos::{is_recording, pause, resume, start, stop, RecorderState};
+
+/// Tauri event name, payload `bool` (true = now recording). Emitted by
+/// `start`/`stop` so the frontend stays in sync when recording is toggled
+/// from the tray menu or the global shortcut instead of the UI.
+pub const RECORDING_STATE_EVENT: &str = "recording-state-changed";

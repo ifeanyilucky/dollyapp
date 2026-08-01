@@ -4,8 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use anyhow::{anyhow, Context, Result};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
+use super::RECORDING_STATE_EVENT;
 use crate::bundle::{BundleWriter, DisplayInfo, RecordingMeta};
 use crate::capture::FrameGrabber;
 use crate::clock::Clock;
@@ -73,7 +74,9 @@ pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
         capture_stop,
         capture_thread: Some(capture_thread),
     });
+    drop(guard);
 
+    let _ = app.emit(RECORDING_STATE_EVENT, true);
     Ok(())
 }
 
@@ -87,6 +90,10 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
         .unwrap()
         .take()
         .ok_or_else(|| anyhow!("no recording in progress"))?;
+    // Emitted as soon as state actually flips, not after bundle writing
+    // below finishes — `is_recording()` is already false at this point
+    // even if writing the bundle subsequently fails.
+    let _ = app.emit(RECORDING_STATE_EVENT, false);
 
     active.capture_stop.store(true, Ordering::SeqCst);
     let outcome = active
