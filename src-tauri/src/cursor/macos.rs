@@ -171,16 +171,16 @@ fn install_global_monitor(
 
 fn modifier_names(flags: NSEventModifierFlags) -> Vec<String> {
     let mut names = Vec::new();
-    if flags.contains(NSEventModifierFlags::Command) {
+    if flags.contains(NSEventModifierFlags::NSEventModifierFlagCommand) {
         names.push("cmd".to_string());
     }
-    if flags.contains(NSEventModifierFlags::Shift) {
+    if flags.contains(NSEventModifierFlags::NSEventModifierFlagShift) {
         names.push("shift".to_string());
     }
-    if flags.contains(NSEventModifierFlags::Option) {
+    if flags.contains(NSEventModifierFlags::NSEventModifierFlagOption) {
         names.push("option".to_string());
     }
-    if flags.contains(NSEventModifierFlags::Control) {
+    if flags.contains(NSEventModifierFlags::NSEventModifierFlagControl) {
         names.push("control".to_string());
     }
     names
