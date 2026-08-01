@@ -7,6 +7,7 @@ pub mod encode;
 pub mod export;
 pub mod fs;
 pub mod permissions;
+pub mod recorder;
 
 pub fn run() {
     tracing_subscriber::fmt::init();
