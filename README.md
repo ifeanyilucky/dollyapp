@@ -11,8 +11,11 @@ cursor track, so motion can be retimed or deleted after the fact and the
 output is always cropped from a high-resolution source rather than scaled up
 from a low-resolution one.
 
-> **Status:** pre-alpha. The project is at milestone M0 (sync spike) —
-> nothing beyond capture + cursor sync has been built yet. Not ready for use.
+> **Status:** pre-alpha, mid-M1 (recorder core). Permissions, menu bar,
+> global hotkey, and a real start/stop/pause recording flow all work; there's
+> no target picker (full display only) and no real `screen.mov` encoding yet
+> (frames are written as a PNG sequence — see `src-tauri/src/capture/`). Not
+> ready for use.
 
 ## Why
 

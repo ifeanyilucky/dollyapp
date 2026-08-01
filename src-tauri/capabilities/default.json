@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capabilities for the main window — recorder commands are plain Tauri commands (no ACL needed), so this only needs to grant the core/plugin APIs the frontend calls directly.",
+  "windows": ["main"],
+  "permissions": ["core:default", "core:event:default", "shell:default", "global-shortcut:default"]
+}
