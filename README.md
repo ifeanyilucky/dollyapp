@@ -43,7 +43,7 @@ Zustand, WebGL2, Tailwind + Radix. Details in `ARCHITECTURE.md`.
 
 ## Requirements
 
-- macOS 13.0+ (Ventura), Apple Silicon only for v1
+- macOS 13.0+ (Ventura), Intel or Apple Silicon
 - [Rust](https://rustup.rs) (stable toolchain)
 - Node.js 20+ and [pnpm](https://pnpm.io)
 - Xcode command line tools (`xcode-select --install`)
