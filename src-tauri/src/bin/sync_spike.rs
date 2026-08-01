@@ -54,7 +54,7 @@ fn main() -> anyhow::Result<()> {
 
     grabber.capture_for(Duration::from_secs(CAPTURE_SECONDS), |frame| {
         if let Some(image) =
-            image::RgbaImage::from_raw(frame.width, frame.height, bgra_to_rgba(&frame.bgra))
+            image::RgbaImage::from_raw(frame.width, frame.height, frame.to_rgba_bytes())
         {
             let path = frames_dir.join(format!("{frame_number:06}.png"));
             if let Err(e) = image.save(&path) {
@@ -130,15 +130,4 @@ fn print_sync_report(events: &[CursorEvent], frame_index: &[(u64, u32)]) {
             None => println!("  {kind} at t={t}us -> no frames captured"),
         }
     }
-}
-
-fn bgra_to_rgba(bgra: &[u8]) -> Vec<u8> {
-    let mut rgba = vec![0u8; bgra.len()];
-    for (src, dst) in bgra.chunks_exact(4).zip(rgba.chunks_exact_mut(4)) {
-        dst[0] = src[2]; // R <- B
-        dst[1] = src[1]; // G
-        dst[2] = src[0]; // B <- R
-        dst[3] = src[3]; // A
-    }
-    rgba
 }

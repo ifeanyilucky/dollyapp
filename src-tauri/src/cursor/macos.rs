@@ -64,6 +64,33 @@ impl CursorRecorder {
     }
 }
 
+impl CursorRecorder {
+    /// Pause/resume don't touch capture at all (PRD §9: "do not try to
+    /// splice video during capture") — they only bracket a `Gap` in the
+    /// cursor track, which the editor uses later to know what range to
+    /// trim. `t` should come from the same `Clock` the recording started
+    /// with, computed by the caller.
+    fn mark_gap_start(&self, t: u64) {
+        if let Ok(mut events) = self.events.lock() {
+            events.push(CursorEvent::Gap { t, resumed_at: None });
+        }
+    }
+
+    /// No-ops if there's no open gap (e.g. resume called without a prior
+    /// pause) — callers are expected to enforce that invariant themselves.
+    fn mark_gap_end(&self, t: u64) {
+        if let Ok(mut events) = self.events.lock() {
+            let open_gap = events
+                .iter_mut()
+                .rev()
+                .find(|e| matches!(e, CursorEvent::Gap { resumed_at: None, .. }));
+            if let Some(CursorEvent::Gap { resumed_at, .. }) = open_gap {
+                *resumed_at = Some(t);
+            }
+        }
+    }
+}
+
 impl CursorRecording for CursorRecorder {
     fn stop(mut self) -> CursorTrack {
         self.stop_flag.store(true, Ordering::SeqCst);

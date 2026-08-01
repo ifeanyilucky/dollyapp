@@ -22,6 +22,22 @@ pub struct CapturedFrame {
     pub bgra: Vec<u8>,
 }
 
+impl CapturedFrame {
+    /// Swaps channel order for `image::RgbaImage`/PNG output. Only used by
+    /// the interim PNG-sequence capture path (see the module doc comment);
+    /// goes away once frames feed VideoToolbox directly instead.
+    pub fn to_rgba_bytes(&self) -> Vec<u8> {
+        let mut rgba = vec![0u8; self.bgra.len()];
+        for (src, dst) in self.bgra.chunks_exact(4).zip(rgba.chunks_exact_mut(4)) {
+            dst[0] = src[2]; // R <- B
+            dst[1] = src[1]; // G
+            dst[2] = src[0]; // B <- R
+            dst[3] = src[3]; // A
+        }
+        rgba
+    }
+}
+
 /// Pulls frames from `scap` at a fixed fps, stamping each with the shared
 /// `Clock`. Blocking: both capture methods run on the calling thread for
 /// their whole duration, invoking `on_frame` synchronously for each frame
