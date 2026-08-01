@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged into the generated Info.plist by Tauri at build time.
+	     TCC shows these strings verbatim on the system permission prompt,
+	     which is why we show our own explanation screen first
+	     (ARCHITECTURE.md "Permissions") — this text is the fallback. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Dolly uses your camera only when you turn on the webcam overlay for a recording.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Dolly uses your microphone only when you enable mic audio for a recording.</string>
+</dict>
+</plist>
