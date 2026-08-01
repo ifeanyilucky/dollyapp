@@ -8,6 +8,8 @@ pub mod export;
 pub mod fs;
 pub mod permissions;
 pub mod recorder;
+mod shortcut;
+mod tray;
 
 pub fn run() {
     tracing_subscriber::fmt::init();
@@ -32,6 +34,10 @@ pub fn run() {
         .manage(recorder::RecorderState::default())
         .setup(|app| {
             use tauri::Manager;
+
+            tray::setup(app.handle())?;
+            shortcut::setup(app.handle())?;
+
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
             }
