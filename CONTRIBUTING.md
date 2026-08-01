@@ -1,7 +1,7 @@
 # Contributing
 
 Dolly is pre-alpha and the architecture is still settling — read
-[`docs/PRD.md`](docs/PRD.md) fully before sending a PR, especially §5–§8. Two
+[`ARCHITECTURE.md`](ARCHITECTURE.md) fully before sending a PR. Two
 rules matter more than any other in this codebase:
 
 1. **Preview and export must never diverge.** The motion engine
@@ -10,7 +10,7 @@ rules matter more than any other in this codebase:
    exporter reads resolved transforms produced by the shared engine.
 2. **The two data streams (video, cursor) share one clock.** Any code that
    timestamps cursor or video events must derive from the `mach_absolute_time`
-   epoch recorded in `meta.json`, never from wall-clock time. See PRD §7.
+   epoch recorded in `meta.json`, never from wall-clock time.
 
 ## Setup
 
@@ -41,7 +41,7 @@ Requires Rust (stable), Node 20+, pnpm, and Xcode command line tools.
 - `cargo fmt --check && cargo clippy` in `src-tauri`
 - If you touched capture, cursor sync, or the motion engine, state in the PR
   description how you verified sync/parity — these are the two things that
-  silently break (see PRD §14 risks table).
+  silently break.
 
 ## License
 
