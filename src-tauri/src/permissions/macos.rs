@@ -1,6 +1,8 @@
 use std::sync::Mutex;
 
-use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio, AVMediaTypeVideo};
+use objc2_av_foundation::{
+    AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio, AVMediaTypeVideo,
+};
 
 use super::PermissionStatus;
 
@@ -51,23 +53,28 @@ pub fn camera_status() -> PermissionStatus {
 /// (ARCHITECTURE.md, "Permissions", rule 2) — never at launch.
 pub async fn request_microphone() -> bool {
     let media_type = unsafe { AVMediaTypeAudio }.expect("AVMediaTypeAudio unavailable");
-    request_access(media_type).await
+    start_request(media_type).await.unwrap_or(false)
 }
 
 /// Same as `request_microphone`, for the webcam overlay.
 pub async fn request_camera() -> bool {
     let media_type = unsafe { AVMediaTypeVideo }.expect("AVMediaTypeVideo unavailable");
-    request_access(media_type).await
+    start_request(media_type).await.unwrap_or(false)
 }
 
-async fn request_access(media_type: &objc2_av_foundation::AVMediaType) -> bool {
+/// Fires the (non-`Send`) ObjC call and hands back a plain `Receiver`, so
+/// none of the raw block/NSString types are ever alive across an `.await` —
+/// Tauri commands require `Send` futures, and `RcBlock`/`NSString` aren't.
+fn start_request(
+    media_type: &objc2_av_foundation::AVMediaType,
+) -> tokio::sync::oneshot::Receiver<bool> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let tx = Mutex::new(Some(tx));
 
     // AVFoundation copies/retains completion-handler blocks it's handed for
     // as long as the async operation is in flight, so `handler` dropping at
-    // the end of this function (once the call below returns) is safe — same
-    // pattern as the NSEvent global monitor in cursor/macos.rs.
+    // the end of this function is safe — same pattern as the NSEvent global
+    // monitor in cursor/macos.rs.
     let handler = block2_avf::RcBlock::new(move |granted: objc2_avf::runtime::Bool| {
         if let Some(tx) = tx.lock().unwrap().take() {
             let _ = tx.send(granted.into());
@@ -78,7 +85,7 @@ async fn request_access(media_type: &objc2_av_foundation::AVMediaType) -> bool {
         AVCaptureDevice::requestAccessForMediaType_completionHandler(media_type, &handler);
     }
 
-    rx.await.unwrap_or(false)
+    rx
 }
 
 fn open_settings_pane(pane_query: &str) {

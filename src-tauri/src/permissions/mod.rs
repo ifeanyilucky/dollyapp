@@ -14,8 +14,8 @@ mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{
     camera_status, microphone_status, open_camera_settings, open_microphone_settings,
-    open_screen_recording_settings, request_camera, request_microphone,
-    request_screen_recording, screen_recording_status,
+    open_screen_recording_settings, request_camera, request_microphone, request_screen_recording,
+    screen_recording_status,
 };
 
 use serde::Serialize;
