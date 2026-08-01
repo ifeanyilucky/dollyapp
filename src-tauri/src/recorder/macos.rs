@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use super::RECORDING_STATE_EVENT;
 use crate::bundle::{BundleWriter, DisplayInfo, RecordingMeta};
-use crate::capture::FrameGrabber;
+use crate::capture::{self, FrameGrabber};
 use crate::clock::Clock;
 use crate::cursor;
 
@@ -17,6 +17,10 @@ const FPS: u32 = 60;
 struct ActiveRecording {
     bundle_dir: PathBuf,
     clock: Clock,
+    /// From `scap::get_scale_factor`, for the target this recording
+    /// actually started against — read once at start rather than at stop,
+    /// since a display could in principle be reconfigured mid-recording.
+    scale_factor: f64,
     /// `Some` while recording, `None` while paused — pause/resume only
     /// bracket a cursor-track `Gap`, they don't touch this (PRD §9: "do
     /// not try to splice video during capture").
@@ -32,23 +36,39 @@ struct CaptureOutcome {
 }
 
 /// Tauri-managed state (`app.manage(RecorderState::default())` in `lib.rs`).
-/// `Mutex<Option<ActiveRecording>>` is `Send + Sync` because nothing in
-/// `ActiveRecording` touches an ObjC type directly — the one thing that
-/// would (the cursor monitor) is pinned to the main thread inside
-/// `cursor::macos`'s own `thread_local` instead. See that module's doc
-/// comment for the full reasoning.
+/// Both fields are `Send + Sync` — `scap::Target` wraps a raw
+/// `CGDisplay`/`CGWindowID` (plain Core Graphics ids, not an ObjC object),
+/// unlike the cursor monitor, which is why it's fine to store directly
+/// here instead of behind the main-thread `thread_local` dance in
+/// `cursor::macos`.
 #[derive(Default)]
-pub struct RecorderState(Mutex<Option<ActiveRecording>>);
+pub struct RecorderState {
+    active: Mutex<Option<ActiveRecording>>,
+    selected_target: Mutex<Option<scap::Target>>,
+}
 
 pub fn is_recording(state: &RecorderState) -> bool {
-    state.0.lock().unwrap().is_some()
+    state.active.lock().unwrap().is_some()
+}
+
+/// `None` clears the selection, falling back to the main display.
+pub fn set_selected_target(state: &RecorderState, target: Option<scap::Target>) {
+    *state.selected_target.lock().unwrap() = target;
 }
 
 pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
-    let mut guard = state.0.lock().unwrap();
+    let mut guard = state.active.lock().unwrap();
     if guard.is_some() {
         return Err(anyhow!("a recording is already in progress"));
     }
+
+    let target = state
+        .selected_target
+        .lock()
+        .unwrap()
+        .clone()
+        .unwrap_or_else(|| scap::Target::Display(scap::get_main_display()));
+    let scale_factor = scap::get_scale_factor(&target);
 
     let clock = Clock::start();
     let bundle_dir = new_bundle_dir(app)?;
@@ -63,13 +83,14 @@ pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
         let bundle_dir = bundle_dir.clone();
         std::thread::Builder::new()
             .name("dolly-capture".into())
-            .spawn(move || run_capture(clock, capture_stop, bundle_dir))
+            .spawn(move || run_capture(clock, capture_stop, bundle_dir, target))
             .context("failed to spawn capture thread")?
     };
 
     *guard = Some(ActiveRecording {
         bundle_dir,
         clock,
+        scale_factor,
         is_paused: false,
         capture_stop,
         capture_thread: Some(capture_thread),
@@ -85,7 +106,7 @@ pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
 /// the next one.
 pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
     let active = state
-        .0
+        .active
         .lock()
         .unwrap()
         .take()
@@ -112,12 +133,7 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
         display: DisplayInfo {
             width_px: outcome.width,
             height_px: outcome.height,
-            // TODO(M1 picker work): read the real backing-scale-factor for
-            // the captured display instead of assuming 1.0 — `outcome`'s
-            // width/height are already physical pixels from `scap`, so
-            // this only matters once cursor coordinates (point space) need
-            // to be mapped onto them precisely.
-            scale_factor: 1.0,
+            scale_factor: active.scale_factor,
         },
         duration_us: active.clock.now_us(),
         has_webcam: false,
@@ -134,7 +150,7 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
 }
 
 pub fn pause(app: &AppHandle, state: &RecorderState) -> Result<()> {
-    let mut guard = state.0.lock().unwrap();
+    let mut guard = state.active.lock().unwrap();
     let active = guard
         .as_mut()
         .ok_or_else(|| anyhow!("no recording in progress"))?;
@@ -146,7 +162,7 @@ pub fn pause(app: &AppHandle, state: &RecorderState) -> Result<()> {
 }
 
 pub fn resume(app: &AppHandle, state: &RecorderState) -> Result<()> {
-    let mut guard = state.0.lock().unwrap();
+    let mut guard = state.active.lock().unwrap();
     let active = guard
         .as_mut()
         .ok_or_else(|| anyhow!("no recording in progress"))?;
@@ -161,11 +177,12 @@ fn run_capture(
     clock: Clock,
     stop_flag: Arc<AtomicBool>,
     bundle_dir: PathBuf,
+    target: scap::Target,
 ) -> Result<CaptureOutcome> {
     let frames_dir = bundle_dir.join("screen_frames");
     std::fs::create_dir_all(&frames_dir)?;
 
-    let mut grabber = FrameGrabber::new(clock, FPS)?;
+    let mut grabber = FrameGrabber::new(clock, FPS, Some(target))?;
     let mut frame_index = Vec::new();
     let mut frame_number = 0u32;
     let mut size = (0u32, 0u32);

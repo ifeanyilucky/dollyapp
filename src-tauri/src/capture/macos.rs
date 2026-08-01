@@ -50,7 +50,10 @@ pub struct FrameGrabber {
 }
 
 impl FrameGrabber {
-    pub fn new(clock: Clock, fps: u32) -> Result<Self> {
+    /// `target`: `None` captures the main display (the sync-spike binary's
+    /// use case); the real recorder always passes an explicit target,
+    /// resolved from the picker via `capture::resolve_target`.
+    pub fn new(clock: Clock, fps: u32, target: Option<scap::Target>) -> Result<Self> {
         if !scap::has_permission() {
             // The caller is expected to have already walked the user
             // through the pre-prompt explanation screen (ARCHITECTURE.md,
@@ -63,7 +66,7 @@ impl FrameGrabber {
 
         let options = Options {
             fps,
-            target: None, // full display; window/region targeting lands with the picker in M1
+            target,
             show_cursor: false,
             show_highlight: false,
             excluded_targets: None,

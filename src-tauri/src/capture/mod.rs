@@ -15,6 +15,10 @@
 
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+mod targets;
 
 #[cfg(target_os = "macos")]
 pub use macos::{CapturedFrame, FrameGrabber};
+#[cfg(target_os = "macos")]
+pub use targets::{list_targets, resolve_target, TargetInfo, TargetKind};
