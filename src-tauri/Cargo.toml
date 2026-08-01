@@ -44,6 +44,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # don't share Retained types, so permissions code built on this stays
 # self-contained rather than passing objc2 values across the boundary.
 objc2-av-foundation = { version = "0.3", default-features = false, features = ["AVCaptureDevice", "AVMediaFormat", "block2"] }
+objc2-avf = { package = "objc2", version = "0.6" }
 block2-avf = { package = "block2", version = "0.6" }
 
 [dev-dependencies]
