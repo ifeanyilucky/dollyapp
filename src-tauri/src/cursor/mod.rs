@@ -10,7 +10,10 @@
 mod macos;
 
 #[cfg(target_os = "macos")]
-pub use macos::{start_on_main_thread, stop_on_main_thread, CursorRecorder};
+pub use macos::{
+    mark_pause_on_main_thread, mark_resume_on_main_thread, start_on_main_thread,
+    stop_on_main_thread, CursorRecorder,
+};
 
 use crate::bundle::CursorTrack;
 

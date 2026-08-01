@@ -147,6 +147,32 @@ pub async fn stop_on_main_thread(app: &tauri::AppHandle) -> Result<CursorTrack> 
         .ok_or_else(|| anyhow!("no active cursor recording to stop"))
 }
 
+/// Brackets a pause with a `Gap` cursor event; `t` should be
+/// `active_recording.clock.now_us()` at the moment of the pause. Fire-and-
+/// forget, same as `start_on_main_thread`.
+pub fn mark_pause_on_main_thread(app: &tauri::AppHandle, t: u64) -> Result<()> {
+    app.run_on_main_thread(move || {
+        ACTIVE_RECORDER.with(|cell| {
+            if let Some(recorder) = cell.borrow().as_ref() {
+                recorder.mark_gap_start(t);
+            }
+        });
+    })
+    .map_err(|e| anyhow!("failed to dispatch pause marker to main thread: {e}"))
+}
+
+/// Closes the most recent open `Gap`. No-op if there wasn't one.
+pub fn mark_resume_on_main_thread(app: &tauri::AppHandle, t: u64) -> Result<()> {
+    app.run_on_main_thread(move || {
+        ACTIVE_RECORDER.with(|cell| {
+            if let Some(recorder) = cell.borrow().as_ref() {
+                recorder.mark_gap_end(t);
+            }
+        });
+    })
+    .map_err(|e| anyhow!("failed to dispatch resume marker to main thread: {e}"))
+}
+
 const SAMPLE_INTERVAL: Duration =
     Duration::from_micros(1_000_000 / CursorTrack::SAMPLE_RATE_HZ as u64);
 
