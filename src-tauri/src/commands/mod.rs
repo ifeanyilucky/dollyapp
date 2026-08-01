@@ -4,5 +4,7 @@
 //! testable without spinning up a Tauri app.
 
 mod permissions;
+mod recorder;
 
 pub use permissions::*;
+pub use recorder::*;

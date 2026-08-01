@@ -124,7 +124,9 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
 
 pub fn pause(app: &AppHandle, state: &RecorderState) -> Result<()> {
     let mut guard = state.0.lock().unwrap();
-    let active = guard.as_mut().ok_or_else(|| anyhow!("no recording in progress"))?;
+    let active = guard
+        .as_mut()
+        .ok_or_else(|| anyhow!("no recording in progress"))?;
     if active.is_paused {
         return Err(anyhow!("recording is already paused"));
     }
@@ -134,7 +136,9 @@ pub fn pause(app: &AppHandle, state: &RecorderState) -> Result<()> {
 
 pub fn resume(app: &AppHandle, state: &RecorderState) -> Result<()> {
     let mut guard = state.0.lock().unwrap();
-    let active = guard.as_mut().ok_or_else(|| anyhow!("no recording in progress"))?;
+    let active = guard
+        .as_mut()
+        .ok_or_else(|| anyhow!("no recording in progress"))?;
     if !active.is_paused {
         return Err(anyhow!("recording is not paused"));
     }
@@ -169,7 +173,11 @@ fn run_capture(
         frame_number += 1;
     })?;
 
-    Ok(CaptureOutcome { frame_index, width: size.0, height: size.1 })
+    Ok(CaptureOutcome {
+        frame_index,
+        width: size.0,
+        height: size.1,
+    })
 }
 
 fn new_bundle_dir(app: &AppHandle) -> Result<PathBuf> {

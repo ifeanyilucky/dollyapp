@@ -24,17 +24,16 @@ pub fn run() {
             commands::open_screen_recording_settings,
             commands::open_microphone_settings,
             commands::open_camera_settings,
+            commands::start_recording,
+            commands::stop_recording,
+            commands::pause_recording,
+            commands::resume_recording,
         ])
+        .manage(recorder::RecorderState::default())
         .setup(|app| {
-            // Recorder/editor commands land in M1/M2; the window starts
-            // hidden (see tauri.conf.json) until there's a UI worth
-            // showing.
-            #[cfg(debug_assertions)]
-            {
-                use tauri::Manager;
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                }
+            use tauri::Manager;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
             }
             Ok(())
         })

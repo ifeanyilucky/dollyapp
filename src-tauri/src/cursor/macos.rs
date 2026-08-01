@@ -72,7 +72,10 @@ impl CursorRecorder {
     /// with, computed by the caller.
     fn mark_gap_start(&self, t: u64) {
         if let Ok(mut events) = self.events.lock() {
-            events.push(CursorEvent::Gap { t, resumed_at: None });
+            events.push(CursorEvent::Gap {
+                t,
+                resumed_at: None,
+            });
         }
     }
 
@@ -80,10 +83,15 @@ impl CursorRecorder {
     /// pause) — callers are expected to enforce that invariant themselves.
     fn mark_gap_end(&self, t: u64) {
         if let Ok(mut events) = self.events.lock() {
-            let open_gap = events
-                .iter_mut()
-                .rev()
-                .find(|e| matches!(e, CursorEvent::Gap { resumed_at: None, .. }));
+            let open_gap = events.iter_mut().rev().find(|e| {
+                matches!(
+                    e,
+                    CursorEvent::Gap {
+                        resumed_at: None,
+                        ..
+                    }
+                )
+            });
             if let Some(CursorEvent::Gap { resumed_at, .. }) = open_gap {
                 *resumed_at = Some(t);
             }
@@ -137,7 +145,8 @@ pub async fn stop_on_main_thread(app: &tauri::AppHandle) -> Result<CursorTrack> 
     let (tx, rx) = tokio::sync::oneshot::channel();
 
     app.run_on_main_thread(move || {
-        let track = ACTIVE_RECORDER.with(|cell| cell.borrow_mut().take().map(CursorRecording::stop));
+        let track =
+            ACTIVE_RECORDER.with(|cell| cell.borrow_mut().take().map(CursorRecording::stop));
         let _ = tx.send(track);
     })
     .map_err(|e| anyhow!("failed to dispatch cursor stop to main thread: {e}"))?;
