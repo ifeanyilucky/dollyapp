@@ -9,7 +9,6 @@ use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSEventType};
-use objc2_foundation::MainThreadMarker;
 
 use super::CursorRecording;
 use crate::bundle::{CursorEvent, CursorSample, CursorTrack, CursorType};
@@ -21,11 +20,9 @@ use crate::clock::Clock;
 /// - a background thread polls `CGEventCreate`'s reported pointer location
 ///   at `CursorTrack::SAMPLE_RATE_HZ` for the position stream (works off the
 ///   main thread, no AppKit main-thread constraint);
-/// - an `NSEvent` global monitor block, which *does* require the main run
-///   loop, delivers clicks/keys/scroll as discrete events.
-///
-/// `start()` must be called on the main thread (Tauri command handlers for
-/// setup run there); the polling thread it spawns does not need to be.
+/// - an `NSEvent` global monitor block, which needs the main run loop
+///   pumping (true of Tauri's app for the app's lifetime) to actually
+///   deliver callbacks, delivers clicks/keys/scroll as discrete events.
 pub struct CursorRecorder {
     clock: Clock,
     samples: Arc<Mutex<Vec<CursorSample>>>,
@@ -73,9 +70,7 @@ impl CursorRecording for CursorRecorder {
             let _ = handle.join();
         }
         if let Some(token) = self.monitor_token.take() {
-            let mtm = MainThreadMarker::new()
-                .expect("CursorRecorder::stop must run on the main thread");
-            unsafe { NSEvent::removeMonitor(mtm, &token) };
+            unsafe { NSEvent::removeMonitor(&token) };
         }
 
         let mut track = CursorTrack::new(self.clock.epoch_us());
@@ -127,9 +122,6 @@ fn install_global_monitor(
     clock: Clock,
     events: Arc<Mutex<Vec<CursorEvent>>>,
 ) -> Option<Retained<AnyObject>> {
-    let mtm = MainThreadMarker::new()
-        .expect("CursorRecorder::start must run on the main thread");
-
     let mask = NSEventMask::LeftMouseDown
         | NSEventMask::LeftMouseUp
         | NSEventMask::RightMouseDown
@@ -140,6 +132,9 @@ fn install_global_monitor(
     let handler = RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| {
         let event = unsafe { event.as_ref() };
         let t = clock.now_us();
+        // For a globally monitored event there's no associated window, and
+        // AppKit documents `locationInWindow` as screen coordinates in that
+        // case — this is not a bug, just an overloaded accessor name.
         let point = unsafe { event.locationInWindow() };
         let kind = unsafe { event.r#type() };
 
@@ -171,7 +166,7 @@ fn install_global_monitor(
         }
     });
 
-    unsafe { NSEvent::addGlobalMonitorForEventsMatchingMask_handler(mtm, mask, &handler) }
+    unsafe { NSEvent::addGlobalMonitorForEventsMatchingMask_handler(mask, &handler) }
 }
 
 fn modifier_names(flags: NSEventModifierFlags) -> Vec<String> {

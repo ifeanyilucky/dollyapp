@@ -31,9 +31,6 @@ pub struct FrameGrabber {
 
 impl FrameGrabber {
     pub fn new(clock: Clock, fps: u32) -> Result<Self> {
-        if !scap::is_supported() {
-            return Err(anyhow!("screen capture is not supported on this system"));
-        }
         if !scap::has_permission() {
             // The caller is expected to have already walked the user
             // through the pre-prompt explanation screen (ARCHITECTURE.md,
@@ -52,11 +49,12 @@ impl FrameGrabber {
             excluded_targets: None,
             output_type: FrameType::BGRAFrame,
             output_resolution: Resolution::Captured,
-            source_rect: None,
             crop_area: None,
         };
 
-        Ok(Self { capturer: Capturer::new(options), clock })
+        let capturer = Capturer::build(options)
+            .map_err(|e| anyhow!("failed to build screen capturer: {e}"))?;
+        Ok(Self { capturer, clock })
     }
 
     pub fn capture_for(
