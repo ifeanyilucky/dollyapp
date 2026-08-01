@@ -2,9 +2,9 @@
 //! selection back onto `scap::Target` (which wraps a raw `CGDisplay`/
 //! `CGWindowID` and isn't worth serializing over IPC as-is).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TargetKind {
     Display,

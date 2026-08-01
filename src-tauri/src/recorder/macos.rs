@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use super::RECORDING_STATE_EVENT;
 use crate::bundle::{BundleWriter, DisplayInfo, RecordingMeta};
-use crate::capture::{self, FrameGrabber};
+use crate::capture::FrameGrabber;
 use crate::clock::Clock;
 use crate::cursor;
 

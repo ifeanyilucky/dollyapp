@@ -26,6 +26,8 @@ pub fn run() {
             commands::open_screen_recording_settings,
             commands::open_microphone_settings,
             commands::open_camera_settings,
+            commands::list_capture_targets,
+            commands::select_capture_target,
             commands::recording_status,
             commands::start_recording,
             commands::stop_recording,
