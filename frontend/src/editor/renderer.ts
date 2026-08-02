@@ -6,6 +6,7 @@ import {
   type ZoomKeyframe,
 } from "../motion-engine";
 import { cursorSizeMultiplier, DEFAULT_CURSOR_SETTINGS, type CursorSettings, type CursorStyleId } from "./cursorSettings";
+import type { SliceCursorOverride } from "./slices";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
 import { GRADIENT_PRESETS, paintCanvasGradient, WALLPAPER_IMAGES } from "./wallpapers";
 
@@ -88,6 +89,11 @@ export function shiftCursorTrack(track: CursorTrack, origin: { x: number; y: num
 export class SceneRenderer {
   private motionEngine: MotionEngine;
   private smoothedSamples: CursorSample[];
+  /** Same samples, before the One Euro filter — used instead of
+   * `smoothedSamples` for whatever time range a slice's
+   * `disableSmoothMovement` override is active, e.g. to keep a drop-down
+   * menu's precise click alignment instead of a smoothed approximation. */
+  private rawSamples: CursorSample[];
   private events: CursorEvent[];
   private scaleFactor: number;
   private videoAspect: number;

@@ -116,6 +116,55 @@ describe("MotionEngine.setKeyframes", () => {
   });
 });
 
+describe("MotionEngine per-keyframe overrides", () => {
+  it("skips a disabled keyframe entirely, staying at 1x/frame-center", () => {
+    const engine = new MotionEngine(FRAME, [
+      kf({ startT: 0, endT: 5_000_000, level: 3, center: { x: 200, y: 200 }, disabled: true }),
+    ]);
+    const { viewport } = stepFor(engine, 2, 16, { x: 200, y: 200 });
+    expect(viewport.width).toBeCloseTo(FRAME.width, 0);
+    expect(viewport.x + viewport.width / 2).toBeCloseTo(FRAME.width / 2, 0);
+  });
+
+  it("manual pan mode ignores the live cursor and holds the keyframe's own center", () => {
+    const engine = new MotionEngine(FRAME, [
+      kf({ startT: 0, endT: 5_000_000, level: 2, center: { x: 600, y: 300 }, panMode: "manual" }),
+    ]);
+    // Live cursor is far from `center` — manual mode should ignore it.
+    const { viewport } = stepFor(engine, 2, 16, { x: 1800, y: 900 });
+    const centerX = viewport.x + viewport.width / 2;
+    const centerY = viewport.y + viewport.height / 2;
+    expect(centerX).toBeCloseTo(600, -1);
+    expect(centerY).toBeCloseTo(300, -1);
+  });
+
+  it("instant animation snaps to the target on the very first tick, no easing", () => {
+    const engine = new MotionEngine(FRAME, [
+      kf({ startT: 0, endT: 5_000_000, level: 2, center: { x: 960, y: 540 }, instantAnimation: true }),
+    ]);
+    // A single tick, not settled over time like the other tests — a
+    // spring-eased transition would still be near 1x this early.
+    const { viewport } = engine.transformAt(16_000);
+    const level = FRAME.width / viewport.width;
+    expect(level).toBeCloseTo(2, 1);
+  });
+
+  it("snapToEdges below 100 lets the viewport drift past the frame edge", () => {
+    const clamped = new MotionEngine(FRAME, [
+      kf({ startT: 0, endT: 5_000_000, level: 2, center: { x: 0, y: 0 }, snapToEdges: 100 }),
+    ]);
+    const unclamped = new MotionEngine(FRAME, [
+      kf({ startT: 0, endT: 5_000_000, level: 2, center: { x: 0, y: 0 }, snapToEdges: 0 }),
+    ]);
+    const clampedViewport = stepFor(clamped, 2, 16, { x: 0, y: 0 }).viewport;
+    const unclampedViewport = stepFor(unclamped, 2, 16, { x: 0, y: 0 }).viewport;
+    // Fully clamped never goes negative; fully unclamped, with `center`
+    // pinned at the frame's own corner, does.
+    expect(clampedViewport.x).toBeGreaterThanOrEqual(0);
+    expect(unclampedViewport.x).toBeLessThan(0);
+  });
+});
+
 describe("MotionEngine stability under large/janky dt", () => {
   it("a single huge dt (simulating a dropped-frame hitch) doesn't overshoot past the target", () => {
     const keyframes: ZoomKeyframe[] = [
