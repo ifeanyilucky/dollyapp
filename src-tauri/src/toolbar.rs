@@ -44,10 +44,15 @@ const HEIGHT: f64 = 420.0;
 const PILL_CENTER_OFFSET: f64 = 40.0;
 
 /// How often `spawn_hit_test_loop` re-checks the cursor against the pill's
-/// reported bounds. Cheap (two syscalls, no IPC to the frontend) — short
-/// enough that the click-through toggle feels instant, long enough to be
-/// a non-issue on CPU.
-const HIT_TEST_INTERVAL: Duration = Duration::from_millis(30);
+/// reported bounds. Cheap (two syscalls, no IPC to the frontend) — while
+/// the window is click-through it receives *no* mouse events at all (not
+/// even hover), so this interval is also the size of the window in which a
+/// real click can land between the cursor arriving on the pill and the
+/// flag actually flipping back to interactive. At the old 30ms this was
+/// large enough for a normal, unhurried click to occasionally land in the
+/// gap and get silently swallowed; 8ms keeps that window below normal
+/// human click-timing while still being cheap enough to poll constantly.
+const HIT_TEST_INTERVAL: Duration = Duration::from_millis(8);
 /// Slack added around the reported pill rect before treating the cursor as
 /// "outside" it — without this, the very first pixel at the pill's edge
 /// would already read as a miss.
