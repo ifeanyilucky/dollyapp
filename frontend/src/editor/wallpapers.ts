@@ -1,32 +1,50 @@
 /**
- * Procedural gradient "wallpapers" — stand in for real wallpaper image
- * assets (which don't exist yet) while still giving the background
- * picker a real, selectable grid instead of an empty placeholder.
- * `cssGradient` renders the sidebar swatch/thumbnail; `paintCanvasGradient`
- * renders the same data as an actual `CanvasGradient` for the preview
- * canvas — Canvas2D can't consume a CSS gradient string directly, so both
- * read from the same stop data to stay in sync.
+ * Background picker data: real photo wallpapers (Wallpaper tab, served from
+ * `public/wallpaper/`), procedural gradients (Gradient tab — no image
+ * assets fit that use case, since a gradient is defined by its stops, not
+ * a bitmap), and shared rendering helpers for both. `cssGradient` renders
+ * the sidebar swatch/thumbnail; `paintCanvasGradient` renders the same
+ * stop data as an actual `CanvasGradient` for the preview canvas —
+ * Canvas2D can't consume a CSS gradient string directly, so both read from
+ * the same stop data to stay in sync.
  */
+
+export interface WallpaperImage {
+  id: string;
+  /** Root-relative URL — files live in `public/wallpaper/` and are served
+   * as-is by Vite in dev and bundled as static assets in the packaged app. */
+  url: string;
+}
+
+export const WALLPAPER_IMAGES: WallpaperImage[] = [
+  { id: "codioful-7130536", url: "/wallpaper/pexels-codioful-7130536.jpg" },
+  { id: "codioful-7135037", url: "/wallpaper/pexels-codioful-7135037.jpg" },
+  { id: "steve-12564255", url: "/wallpaper/pexels-steve-12564255.jpg" },
+  { id: "steve-26756127", url: "/wallpaper/pexels-steve-26756127.jpg" },
+  { id: "steve-29101886", url: "/wallpaper/pexels-steve-29101886.jpg" },
+  { id: "steve-29237418", url: "/wallpaper/pexels-steve-29237418.jpg" },
+  { id: "steve-34939150", url: "/wallpaper/pexels-steve-34939150.jpg" },
+];
 
 export interface GradientStop {
   offset: number;
   color: string;
 }
 
-export type WallpaperCategory = "macOS" | "Spring" | "Sunset" | "Radiant";
+export type GradientCategory = "macOS" | "Spring" | "Sunset" | "Radiant";
 
-export interface WallpaperPreset {
+export interface GradientPreset {
   id: string;
-  category: WallpaperCategory;
+  category: GradientCategory;
   type: "linear" | "radial";
   /** Degrees, linear only. */
   angleDeg?: number;
   stops: GradientStop[];
 }
 
-export const WALLPAPER_CATEGORIES: WallpaperCategory[] = ["macOS", "Spring", "Sunset", "Radiant"];
+export const GRADIENT_CATEGORIES: GradientCategory[] = ["macOS", "Spring", "Sunset", "Radiant"];
 
-export const WALLPAPER_PRESETS: WallpaperPreset[] = [
+export const GRADIENT_PRESETS: GradientPreset[] = [
   // macOS — cool blues/teals, evoking the stock Sonoma/Sequoia gradients
   {
     id: "macos-1",
@@ -195,7 +213,7 @@ export const WALLPAPER_PRESETS: WallpaperPreset[] = [
   },
 ];
 
-export function cssGradient(preset: WallpaperPreset): string {
+export function cssGradient(preset: GradientPreset): string {
   const stops = preset.stops.map((s) => `${s.color} ${Math.round(s.offset * 100)}%`).join(", ");
   return preset.type === "radial"
     ? `radial-gradient(circle, ${stops})`
@@ -204,7 +222,7 @@ export function cssGradient(preset: WallpaperPreset): string {
 
 export function paintCanvasGradient(
   ctx: CanvasRenderingContext2D,
-  preset: WallpaperPreset,
+  preset: GradientPreset,
   width: number,
   height: number,
 ): CanvasGradient {

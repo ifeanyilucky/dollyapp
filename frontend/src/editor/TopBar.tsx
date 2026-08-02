@@ -1,4 +1,5 @@
 import {
+  ChevronLeft,
   Crop,
   Eye,
   EyeOff,
@@ -32,6 +33,7 @@ export function TopBar({
   onCyclePlaybackRate,
   onRevealInFinder,
   onDelete,
+  onClose,
 }: {
   title: string;
   aspectLabel: string;
@@ -41,10 +43,20 @@ export function TopBar({
   onCyclePlaybackRate: () => void;
   onRevealInFinder: () => void;
   onDelete: () => void;
+  onClose: () => void;
 }) {
   return (
     <div className="flex w-full flex-col border-b border-neutral-800/80 bg-neutral-950">
       <div className="flex items-center gap-1 px-4 py-2.5">
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-900 hover:text-neutral-300"
+          aria-label="Back to recordings"
+          title="Back"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
         <button
           type="button"
           onClick={onRevealInFinder}

@@ -1,8 +1,14 @@
-import { Sparkles, Star } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Sparkles, Star, Upload, X } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import { Slider } from "./Slider";
 import { DEFAULT_STYLE, type BackgroundType, type StyleSettings } from "./style";
-import { cssGradient, WALLPAPER_CATEGORIES, WALLPAPER_PRESETS, type WallpaperCategory } from "./wallpapers";
+import {
+  cssGradient,
+  GRADIENT_CATEGORIES,
+  GRADIENT_PRESETS,
+  type GradientCategory,
+  WALLPAPER_IMAGES,
+} from "./wallpapers";
 
 const BACKGROUND_TABS: { id: BackgroundType; label: string }[] = [
   { id: "wallpaper", label: "Wallpaper" },
@@ -15,9 +21,9 @@ const COLOR_SWATCHES = ["#1e1b2e", "#0f172a", "#111111", "#f4f3ec", "#2d1b1b", "
 
 /**
  * Background/spacing/shadow controls — "Backgrounds" and "Shadow and
- * inset". Wallpaper and Gradient are both real and selectable (procedural
- * gradients, see wallpapers.ts — no image assets yet); Image is a
- * placeholder. Aspect-ratio switching and cut/speed are separate, larger
+ * inset". Wallpaper (real bundled photos, see `public/wallpaper/`),
+ * Gradient (procedural), Color, and Image (user upload) are all real and
+ * selectable. Aspect-ratio switching and cut/speed are separate, larger
  * features not covered here.
  */
 export function StylePanel({
@@ -27,22 +33,37 @@ export function StylePanel({
   style: StyleSettings;
   onChange: (next: StyleSettings) => void;
 }) {
-  const [category, setCategory] = useState<WallpaperCategory | "favorites">("macOS");
+  const [category, setCategory] = useState<GradientCategory | "favorites">("macOS");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   function set<K extends keyof StyleSettings>(key: K, value: StyleSettings[K]) {
     onChange({ ...style, [key]: value });
   }
 
-  const visibleWallpapers = useMemo(
-    () =>
-      category === "favorites" ? [] : WALLPAPER_PRESETS.filter((w) => w.category === category),
+  const visibleGradients = useMemo(
+    () => (category === "favorites" ? [] : GRADIENT_PRESETS.filter((g) => g.category === category)),
     [category],
   );
 
   function pickRandomWallpaper() {
-    const pool = WALLPAPER_PRESETS;
-    const next = pool[Math.floor(Math.random() * pool.length)];
+    const next = WALLPAPER_IMAGES[Math.floor(Math.random() * WALLPAPER_IMAGES.length)];
     onChange({ ...style, backgroundType: "wallpaper", wallpaperId: next.id });
+  }
+
+  function pickRandomGradient() {
+    const next = GRADIENT_PRESETS[Math.floor(Math.random() * GRADIENT_PRESETS.length)];
+    onChange({ ...style, backgroundType: "gradient", gradientId: next.id });
+  }
+
+  function handleFileChosen(file: File) {
+    if (style.customImageUrl?.startsWith("blob:")) URL.revokeObjectURL(style.customImageUrl);
+    const url = URL.createObjectURL(file);
+    onChange({ ...style, backgroundType: "image", customImageUrl: url });
+  }
+
+  function clearCustomImage() {
+    if (style.customImageUrl?.startsWith("blob:")) URL.revokeObjectURL(style.customImageUrl);
+    set("customImageUrl", null);
   }
 
   return (
@@ -67,11 +88,49 @@ export function StylePanel({
         </div>
       </div>
 
-      {(style.backgroundType === "wallpaper" || style.backgroundType === "gradient") && (
+      {style.backgroundType === "wallpaper" && (
         <div className="flex flex-col gap-3">
-          <h3 className="text-[13px] font-medium text-neutral-200">
-            {style.backgroundType === "wallpaper" ? "Wallpaper" : "Gradient"}
-          </h3>
+          <h3 className="text-[13px] font-medium text-neutral-200">Wallpaper</h3>
+
+          <button
+            type="button"
+            onClick={pickRandomWallpaper}
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-neutral-900 py-2 text-[12px] font-medium text-neutral-300 hover:bg-neutral-800"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            Pick random wallpaper
+          </button>
+
+          <div className="grid grid-cols-4 gap-1.5">
+            {WALLPAPER_IMAGES.map((w) => (
+              <button
+                key={w.id}
+                type="button"
+                onClick={() => set("wallpaperId", w.id)}
+                className="aspect-square overflow-hidden rounded-md bg-cover bg-center"
+                style={{
+                  backgroundImage: `url(${w.url})`,
+                  outline: style.wallpaperId === w.id ? "2px solid #f5f5f5" : "none",
+                  outlineOffset: 1,
+                }}
+                aria-label={w.id}
+              />
+            ))}
+          </div>
+
+          <Slider
+            label="Background blur"
+            value={style.backgroundBlur}
+            min={0}
+            max={40}
+            onChange={(v) => set("backgroundBlur", v)}
+          />
+        </div>
+      )}
+
+      {style.backgroundType === "gradient" && (
+        <div className="flex flex-col gap-3">
+          <h3 className="text-[13px] font-medium text-neutral-200">Gradient</h3>
 
           <div className="flex flex-wrap items-center gap-1.5">
             <button
@@ -84,7 +143,7 @@ export function StylePanel({
             >
               <Star className="h-3.5 w-3.5" />
             </button>
-            {WALLPAPER_CATEGORIES.map((c) => (
+            {GRADIENT_CATEGORIES.map((c) => (
               <button
                 key={c}
                 type="button"
@@ -102,26 +161,26 @@ export function StylePanel({
 
           <button
             type="button"
-            onClick={pickRandomWallpaper}
+            onClick={pickRandomGradient}
             className="flex items-center justify-center gap-1.5 rounded-lg bg-neutral-900 py-2 text-[12px] font-medium text-neutral-300 hover:bg-neutral-800"
           >
             <Sparkles className="h-3.5 w-3.5" />
-            Pick random wallpaper
+            Pick random gradient
           </button>
 
           <div className="grid grid-cols-7 gap-1.5">
-            {visibleWallpapers.map((w) => (
+            {visibleGradients.map((g) => (
               <button
-                key={w.id}
+                key={g.id}
                 type="button"
-                onClick={() => set("wallpaperId", w.id)}
+                onClick={() => set("gradientId", g.id)}
                 className="aspect-square rounded-md"
                 style={{
-                  background: cssGradient(w),
-                  outline: style.wallpaperId === w.id ? "2px solid #f5f5f5" : "none",
+                  background: cssGradient(g),
+                  outline: style.gradientId === g.id ? "2px solid #f5f5f5" : "none",
                   outlineOffset: 1,
                 }}
-                aria-label={w.id}
+                aria-label={g.id}
               />
             ))}
           </div>
@@ -163,9 +222,51 @@ export function StylePanel({
       )}
 
       {style.backgroundType === "image" && (
-        <p className="rounded-md border border-dashed border-neutral-800 px-3 py-6 text-center text-[11px] text-neutral-600">
-          Image backgrounds aren't built yet.
-        </p>
+        <div className="flex flex-col gap-3">
+          <h3 className="text-[13px] font-medium text-neutral-200">Image</h3>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleFileChosen(file);
+              e.target.value = "";
+            }}
+          />
+          {style.customImageUrl ? (
+            <div className="relative overflow-hidden rounded-lg border border-neutral-800">
+              <img src={style.customImageUrl} alt="" className="aspect-video w-full object-cover" />
+              <button
+                type="button"
+                onClick={clearCustomImage}
+                className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-md bg-black/60 text-neutral-200 hover:bg-black/80"
+                aria-label="Remove image"
+                title="Remove image"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-neutral-700 py-6 text-[12px] font-medium text-neutral-400 hover:border-neutral-600 hover:text-neutral-200"
+          >
+            <Upload className="h-3.5 w-3.5" />
+            {style.customImageUrl ? "Upload a different image" : "Upload an image"}
+          </button>
+          {style.customImageUrl && (
+            <Slider
+              label="Background blur"
+              value={style.backgroundBlur}
+              min={0}
+              max={40}
+              onChange={(v) => set("backgroundBlur", v)}
+            />
+          )}
+        </div>
       )}
 
       <div className="flex flex-col gap-4 border-t border-neutral-800 pt-4">

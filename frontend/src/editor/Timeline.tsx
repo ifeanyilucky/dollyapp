@@ -1,5 +1,5 @@
+import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
 import type { ZoomKeyframe } from "../motion-engine";
-import { PauseIcon, PlayIcon, SkipBackIcon, SkipForwardIcon } from "./icons";
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds)) return "0:00";
@@ -60,7 +60,7 @@ export function Timeline({
           className="rounded p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
           aria-label="Skip to start"
         >
-          <SkipBackIcon className="h-4 w-4" />
+          <SkipBack className="h-4 w-4" fill="currentColor" />
         </button>
         <button
           type="button"
@@ -68,7 +68,11 @@ export function Timeline({
           className="rounded p-1.5 text-neutral-200 hover:bg-neutral-800"
           aria-label={isPlaying ? "Pause" : "Play"}
         >
-          {isPlaying ? <PauseIcon className="h-5 w-5" /> : <PlayIcon className="h-5 w-5" />}
+          {isPlaying ? (
+            <Pause className="h-5 w-5" fill="currentColor" />
+          ) : (
+            <Play className="h-5 w-5" fill="currentColor" />
+          )}
         </button>
         <button
           type="button"
@@ -76,7 +80,7 @@ export function Timeline({
           className="rounded p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
           aria-label="Skip to end"
         >
-          <SkipForwardIcon className="h-4 w-4" />
+          <SkipForward className="h-4 w-4" fill="currentColor" />
         </button>
         <span className="ml-2 font-mono text-xs text-neutral-500">{formatTime(currentTime)}</span>
         <div className="flex-1" />
@@ -131,7 +135,9 @@ export function Timeline({
         <div
           className="pointer-events-none absolute bottom-0 top-0 w-px bg-neutral-100"
           style={{ left: `${playheadPct}%` }}
-        />
+        >
+          <div className="absolute -top-1 left-1/2 h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-neutral-100" />
+        </div>
       </div>
     </div>
   );

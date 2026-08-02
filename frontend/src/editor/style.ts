@@ -1,4 +1,4 @@
-import { WALLPAPER_PRESETS } from "./wallpapers";
+import { GRADIENT_PRESETS, WALLPAPER_IMAGES } from "./wallpapers";
 
 /**
  * Style panel state — background, spacing, corner radius, and shadow
@@ -10,10 +10,16 @@ export type BackgroundType = "wallpaper" | "gradient" | "color" | "image";
 
 export interface StyleSettings {
   backgroundType: BackgroundType;
-  /** Wallpaper preset id (see wallpapers.ts) — used when backgroundType
-   * is "wallpaper" or "gradient" (gradient reuses the same preset list
-   * for now; a custom gradient builder is a follow-up). */
+  /** Selected id from `WALLPAPER_IMAGES` — used when backgroundType is
+   * "wallpaper". */
   wallpaperId: string;
+  /** Selected id from `GRADIENT_PRESETS` — used when backgroundType is
+   * "gradient". */
+  gradientId: string;
+  /** User-uploaded background image, as an object URL (see
+   * `URL.createObjectURL` in StylePanel) — used when backgroundType is
+   * "image". Null until the user picks a file. */
+  customImageUrl: string | null;
   backgroundColor: string;
   backgroundBlur: number;
   /** Canvas px between the frame edge and the video content. */
@@ -32,7 +38,9 @@ export interface StyleSettings {
 
 export const DEFAULT_STYLE: StyleSettings = {
   backgroundType: "wallpaper",
-  wallpaperId: WALLPAPER_PRESETS[0].id,
+  wallpaperId: WALLPAPER_IMAGES[0].id,
+  gradientId: GRADIENT_PRESETS[0].id,
+  customImageUrl: null,
   backgroundColor: "#1e1b2e",
   backgroundBlur: 0,
   padding: 64,

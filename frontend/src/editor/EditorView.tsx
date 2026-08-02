@@ -26,15 +26,20 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [style, setStyle] = useState<StyleSettings>(DEFAULT_STYLE);
+  const [showCursor, setShowCursor] = useState(true);
+  const [playbackRate, setPlaybackRate] = useState(1);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<SceneRenderer | null>(null);
-  // Style changes come from slider drags (many events/sec); a ref lets the
-  // render loop always read the latest value without restarting the rAF
-  // effect on every tick, which `style` as a dependency would cause.
+  // Style/cursor-visibility changes can fire rapidly (slider drags) or
+  // need to be read from a rAF loop that shouldn't restart every tick —
+  // refs let `tick` always see the latest value without becoming a
+  // dependency of the render-loop effect.
   const styleRef = useRef(style);
   styleRef.current = style;
+  const showCursorRef = useRef(showCursor);
+  showCursorRef.current = showCursor;
 
   useEffect(() => {
     let cancelled = false;
@@ -90,7 +95,7 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
       const renderer = rendererRef.current;
       if (renderer && video.readyState >= 2) {
         const tUs = video.currentTime * 1_000_000 + loaded.meta.videoStartUs;
-        renderer.draw(ctx, video, tUs, styleRef.current);
+        renderer.draw(ctx, video, tUs, styleRef.current, showCursorRef.current);
         setCurrentTime(video.currentTime);
       }
       raf = requestAnimationFrame(tick);
@@ -112,6 +117,18 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
     video.currentTime = seconds;
     rendererRef.current?.resetAt(seconds * 1_000_000 + loaded.meta.videoStartUs);
     setCurrentTime(seconds);
+  }
+
+  function cyclePlaybackRate() {
+    const next = nextPlaybackRate(playbackRate);
+    setPlaybackRate(next);
+    if (videoRef.current) videoRef.current.playbackRate = next;
+  }
+
+  async function handleDelete() {
+    if (!window.confirm("Delete this recording? This can't be undone.")) return;
+    await deleteRecording(bundlePath);
+    onClose();
   }
 
   if (error) {
@@ -142,11 +159,17 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
       <TopBar
         title={bundlePath.split("/").pop() ?? bundlePath}
         aspectLabel={aspect >= 1 ? "Wide 16:9" : "Vertical 9:16"}
+        showCursor={showCursor}
+        onToggleCursor={() => setShowCursor((v) => !v)}
+        playbackRate={playbackRate}
+        onCyclePlaybackRate={cyclePlaybackRate}
         onRevealInFinder={() => void revealInFinder(bundlePath)}
+        onDelete={() => void handleDelete()}
         onClose={onClose}
       />
 
-      <div className="flex flex-1 items-center justify-center gap-6 overflow-hidden p-6">
+      <div className="flex flex-1 items-center justify-center gap-4 overflow-hidden p-6">
+        <IconRail />
         <div className="flex h-full flex-1 items-center justify-center">
           <canvas
             ref={canvasRef}

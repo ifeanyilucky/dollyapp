@@ -1,7 +1,7 @@
 import type { CursorEvent, CursorSample, CursorTrack } from "../bundle/types";
 import { createMotionEngine, smoothCursorTrack, type FrameSize, type MotionEngine } from "../motion-engine";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
-import { paintCanvasGradient, WALLPAPER_PRESETS } from "./wallpapers";
+import { GRADIENT_PRESETS, paintCanvasGradient, WALLPAPER_IMAGES } from "./wallpapers";
 
 const CLICK_PULSE_DURATION_US = 220_000;
 const CLICK_RIPPLE_DURATION_US = 500_000;
@@ -55,6 +55,10 @@ export class SceneRenderer {
   private backgroundLayer: HTMLCanvasElement | null = null;
   private backgroundLayerKey = "";
   private backgroundBlurSource: HTMLCanvasElement | null = null;
+  // Wallpaper photos and user-uploaded images decode asynchronously; cache
+  // the `Image` objects across frames instead of re-creating (and
+  // re-downloading) one every draw call.
+  private imageCache = new Map<string, HTMLImageElement>();
 
   constructor(opts: SceneRendererOptions) {
     this.scaleFactor = opts.scaleFactor;
@@ -155,6 +159,28 @@ export class SceneRenderer {
     return { x: (canvasWidth - width) / 2, y: (canvasHeight - height) / 2, width, height };
   }
 
+  /** Resolves the photo URL backing "wallpaper" (bundled presets) or
+   * "image" (user upload) background types; null for color/gradient. */
+  private backgroundImageUrl(style: StyleSettings): string | null {
+    if (style.backgroundType === "wallpaper") {
+      return WALLPAPER_IMAGES.find((w) => w.id === style.wallpaperId)?.url ?? WALLPAPER_IMAGES[0].url;
+    }
+    if (style.backgroundType === "image") {
+      return style.customImageUrl;
+    }
+    return null;
+  }
+
+  private getImage(url: string): HTMLImageElement {
+    let img = this.imageCache.get(url);
+    if (!img) {
+      img = new Image();
+      img.src = url;
+      this.imageCache.set(url, img);
+    }
+    return img;
+  }
+
   private paintBackgroundFill(
     ctx: CanvasRenderingContext2D,
     style: StyleSettings,
@@ -163,23 +189,49 @@ export class SceneRenderer {
   ): void {
     if (style.backgroundType === "color") {
       ctx.fillStyle = style.backgroundColor;
-    } else {
-      // "gradient" and "wallpaper" both read from the same preset list
-      // for now — a from-scratch gradient builder and real image
-      // wallpapers are follow-ups, not different data underneath.
-      const preset =
-        WALLPAPER_PRESETS.find((p) => p.id === style.wallpaperId) ?? WALLPAPER_PRESETS[0];
-      ctx.fillStyle = paintCanvasGradient(ctx, preset, width, height);
+      ctx.fillRect(0, 0, width, height);
+      return;
     }
+    if (style.backgroundType === "gradient") {
+      const preset = GRADIENT_PRESETS.find((p) => p.id === style.gradientId) ?? GRADIENT_PRESETS[0];
+      ctx.fillStyle = paintCanvasGradient(ctx, preset, width, height);
+      ctx.fillRect(0, 0, width, height);
+      return;
+    }
+
+    // "wallpaper" or "image": cover-fit a photo. Fall back to a flat fill
+    // until the bitmap has decoded (or, for "image", until the user has
+    // picked one) so the canvas never goes transparent.
+    ctx.fillStyle = "#111114";
     ctx.fillRect(0, 0, width, height);
+    const url = this.backgroundImageUrl(style);
+    if (!url) return;
+    const img = this.getImage(url);
+    if (!img.complete || img.naturalWidth === 0) return;
+
+    const scale = Math.max(width / img.naturalWidth, height / img.naturalHeight);
+    const dw = img.naturalWidth * scale;
+    const dh = img.naturalHeight * scale;
+    ctx.drawImage(img, (width - dw) / 2, (height - dh) / 2, dw, dh);
   }
 
   private getBackgroundLayer(canvasWidth: number, canvasHeight: number, style: StyleSettings): HTMLCanvasElement {
+    const imageUrl = this.backgroundImageUrl(style);
+    // Photos decode asynchronously; fold "has this URL finished loading
+    // yet" into the cache key so the layer is repainted with the real
+    // bitmap the first frame after it becomes available, instead of the
+    // placeholder fill sticking around for the rest of playback.
+    const imageReady = imageUrl ? this.getImage(imageUrl).complete : false;
+
     const key = [
       canvasWidth,
       canvasHeight,
       style.backgroundType,
-      style.backgroundType === "color" ? style.backgroundColor : style.wallpaperId,
+      style.backgroundType === "color"
+        ? style.backgroundColor
+        : style.backgroundType === "gradient"
+          ? style.gradientId
+          : `${imageUrl ?? ""}:${imageReady}`,
       style.backgroundBlur,
     ].join(":");
 
