@@ -1,11 +1,12 @@
+import { TargetPicker } from "./TargetPicker";
 import { useRecordingState } from "./useRecordingState";
 
 /**
  * Minimal recorder screen — a Start/Stop button plus pause/resume, all
  * reflecting the same state the tray menu and `⌥⌘2` control (PRD §9: menu
  * bar is the primary entry point, this window included for completeness).
- * No display/window/region picker yet — full-display only until that
- * lands (`src-tauri/src/capture/macos.rs`, `target: None`).
+ * Region selection isn't built yet — `TargetPicker` only covers whole
+ * displays/windows.
  */
 export function RecorderView() {
   const { isRecording, isPaused, busy, error, lastRecordingPath, start, stop, togglePause } =
@@ -14,6 +15,8 @@ export function RecorderView() {
   return (
     <main className="flex h-screen w-screen flex-col items-center justify-center gap-4 bg-neutral-950 text-neutral-300">
       <h1 className="text-lg font-medium text-neutral-100">Dolly</h1>
+
+      <TargetPicker disabled={isRecording || busy} />
 
       <div className="flex items-center gap-2">
         <button
