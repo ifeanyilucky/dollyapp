@@ -72,6 +72,7 @@ fn main() -> anyhow::Result<()> {
     writer.write_meta(&RecordingMeta {
         version: RecordingMeta::CURRENT_VERSION,
         clock_epoch: clock.epoch_us(),
+        video_start_us: frame_index.first().map(|(t, _)| *t).unwrap_or(0),
         // Point-space size is unknown without a display query the spike
         // doesn't need; filled with the first captured frame's pixel size
         // as a placeholder, scale factor left at 1.0 pending that query.

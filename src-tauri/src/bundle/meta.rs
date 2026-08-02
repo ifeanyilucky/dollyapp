@@ -5,11 +5,21 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct RecordingMeta {
     pub version: u32,
-    /// `mach_absolute_time` at the moment the first video frame landed.
-    /// Every timestamp in `cursor.json` is relative to this. See
+    /// `mach_absolute_time` at the moment `Clock::start()` was called, just
+    /// before cursor tracking and capture both begin — every `t` in
+    /// `cursor.json`, and `video_start_us` below, are relative to this. See
     /// ARCHITECTURE.md "Recording format" — this field is why the two
     /// streams stay in sync.
     pub clock_epoch: u64,
+    /// `t` (relative to `clock_epoch`, same units as `cursor.json`) of the
+    /// first frame actually written to `screen.mov`. Needed because
+    /// `AVAssetWriter.startSessionAtSourceTime` anchors the *movie's own*
+    /// zero to that frame's timestamp, not to `clock_epoch` — capture
+    /// always has some startup latency before the first real frame lands,
+    /// so this is never 0. To map an HTML `<video>` element's
+    /// `currentTime` (movie-relative seconds) onto a `cursor.json`
+    /// timestamp: `t = currentTime * 1_000_000 + video_start_us`.
+    pub video_start_us: u64,
     pub display: DisplayInfo,
     /// Wall-clock duration of the recording, in microseconds.
     pub duration_us: u64,

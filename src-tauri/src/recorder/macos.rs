@@ -40,6 +40,10 @@ struct CaptureOutcome {
     frame_count: u32,
     width: u32,
     height: u32,
+    /// `t` of the first frame written to `screen.mov` — see the doc
+    /// comment on `RecordingMeta::video_start_us` for why this needs to
+    /// be captured and persisted, not assumed to be 0.
+    video_start_us: u64,
 }
 
 /// Tauri-managed state (`app.manage(RecorderState::default())` in `lib.rs`).
@@ -178,6 +182,7 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
     writer.write_meta(&RecordingMeta {
         version: RecordingMeta::CURRENT_VERSION,
         clock_epoch: active.clock.epoch_us(),
+        video_start_us: outcome.video_start_us,
         display: DisplayInfo {
             width_px: outcome.width,
             height_px: outcome.height,
@@ -236,6 +241,7 @@ fn run_capture(
     let mut writer: Option<MovWriter> = None;
     let mut size = (0u32, 0u32);
     let mut frame_count = 0u32;
+    let mut video_start_us = 0u64;
     let mut first_error: Option<anyhow::Error> = None;
 
     grabber.run_until_stopped(&stop_flag, |frame| {
@@ -256,7 +262,13 @@ fn run_capture(
 
         if writer.is_none() {
             match MovWriter::create(&mov_path, frame.width, frame.height) {
-                Ok(w) => writer = Some(w),
+                Ok(w) => {
+                    writer = Some(w);
+                    // The frame that triggers writer creation is always
+                    // the first one actually written — see
+                    // `RecordingMeta::video_start_us`'s doc comment.
+                    video_start_us = frame.t;
+                }
                 Err(e) => {
                     first_error = Some(e);
                     return;
@@ -283,6 +295,7 @@ fn run_capture(
         frame_count,
         width: size.0,
         height: size.1,
+        video_start_us,
     })
 }
 

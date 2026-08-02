@@ -56,6 +56,7 @@ mod tests {
         let meta = RecordingMeta {
             version: RecordingMeta::CURRENT_VERSION,
             clock_epoch: 1_000_000,
+            video_start_us: 150_000,
             display: DisplayInfo {
                 width_px: 2560,
                 height_px: 1440,
