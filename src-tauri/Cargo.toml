@@ -66,6 +66,13 @@ hound = "3"
 [dev-dependencies]
 tempfile = "3"
 
+# `scap` 0.0.8's window-target dimension/scale-factor lookup is broken for
+# any window not owned by this process (see vendor/scap/PATCH.md) — which
+# is every real capture target — silently making window capture fall back
+# to recording the whole display. Patched locally pending an upstream fix.
+[patch.crates-io]
+scap = { path = "vendor/scap" }
+
 [profile.release]
 opt-level = 3
 lto = true
