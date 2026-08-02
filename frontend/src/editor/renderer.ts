@@ -24,6 +24,27 @@ export interface SceneRendererOptions {
   frame: FrameSize;
   scaleFactor: number;
   cursorTrack: CursorTrack;
+  /** `RecordingMeta.display.originX/originY` — top-left of the captured
+   * content in the same global point space `cursorTrack` samples are
+   * already in. Non-zero whenever the recording was a window or a custom
+   * area rather than a full main-display capture; subtracted from every
+   * sample/event position up front so the rest of this class can treat
+   * `cursorTrack` as already being in video-local space. */
+  origin?: { x: number; y: number };
+}
+
+/** Re-anchors every position-bearing sample/event in `track` from global
+ * point space onto `origin` — see `SceneRendererOptions.origin`'s doc
+ * comment. A no-op copy when `origin` is `(0, 0)` (the common case). */
+function shiftCursorTrack(track: CursorTrack, origin: { x: number; y: number }): CursorTrack {
+  if (origin.x === 0 && origin.y === 0) return track;
+  return {
+    ...track,
+    samples: track.samples.map((s) => ({ ...s, x: s.x - origin.x, y: s.y - origin.y })),
+    events: track.events.map((e) =>
+      "x" in e ? { ...e, x: e.x - origin.x, y: e.y - origin.y } : e,
+    ),
+  };
 }
 
 /**
@@ -63,9 +84,10 @@ export class SceneRenderer {
   constructor(opts: SceneRendererOptions) {
     this.scaleFactor = opts.scaleFactor;
     this.videoAspect = opts.frame.width / opts.frame.height;
-    this.motionEngine = createMotionEngine(opts.cursorTrack, opts.frame);
-    this.smoothedSamples = smoothCursorTrack(opts.cursorTrack.samples);
-    this.events = opts.cursorTrack.events;
+    const cursorTrack = shiftCursorTrack(opts.cursorTrack, opts.origin ?? { x: 0, y: 0 });
+    this.motionEngine = createMotionEngine(cursorTrack, opts.frame);
+    this.smoothedSamples = smoothCursorTrack(cursorTrack.samples);
+    this.events = cursorTrack.events;
   }
 
   /** Call after a scrub/seek so the next `draw` doesn't treat the jump as

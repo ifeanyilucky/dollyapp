@@ -11,6 +11,13 @@ export interface DisplayInfo {
   /** Retina scale factor. Cursor coordinates are in point space, not pixel
    * space — multiply by this to map onto screen.mov pixels. */
   scaleFactor: number;
+  /** Top-left of the captured content (window, cropped area, or display)
+   * in the same global point space cursor.json samples are already in —
+   * subtract this from a sample before treating it as video-local, e.g.
+   * `videoX = (sample.x - display.originX) * display.scaleFactor`. `(0, 0)`
+   * for a full main-display recording. */
+  originX: number;
+  originY: number;
 }
 
 export interface RecordingMeta {

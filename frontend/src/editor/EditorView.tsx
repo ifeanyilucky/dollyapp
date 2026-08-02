@@ -63,11 +63,12 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   // "Recording format").
   useEffect(() => {
     if (!loaded) return;
-    const { widthPx, heightPx, scaleFactor } = loaded.meta.display;
+    const { widthPx, heightPx, scaleFactor, originX, originY } = loaded.meta.display;
     rendererRef.current = new SceneRenderer({
       frame: { width: widthPx / scaleFactor, height: heightPx / scaleFactor },
       scaleFactor,
       cursorTrack: loaded.cursorTrack,
+      origin: { x: originX, y: originY },
     });
     rendererRef.current.resetAt(loaded.meta.videoStartUs);
   }, [loaded]);
