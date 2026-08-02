@@ -153,42 +153,49 @@ export function WindowPickerView() {
         </>
       )}
 
-      {/* Window label + Start recording — centered on the screen, both
-          vertically and horizontally. */}
-      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-4">
-        {info ? (
-          <div className="pointer-events-none flex flex-col items-center gap-4">
-            <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-neutral-900/90 px-4 py-2.5 shadow-2xl backdrop-blur">
-              <div className="text-center">
-                <p className="truncate text-[14px] font-semibold leading-tight text-white">
-                  {info.ownerName || info.title || "Window"}
-                </p>
-                <p className="truncate text-[11px] leading-tight text-neutral-400">
-                  {info.title && `${info.title} · `}
-                  {Math.round(info.width)} × {Math.round(info.height)}
-                </p>
-              </div>
+      {/* Window label + Start recording — centered on the *hovered
+          window's own rect*, not the screen, so it sits over whatever
+          you're about to record rather than always sitting in the middle
+          of the display regardless of where that window actually is.
+          `overflow-visible` (the default) lets the content spill outside
+          a window rect that's smaller than the label/button need. */}
+      {rect ? (
+        <div
+          className="pointer-events-none absolute flex flex-col items-center justify-center gap-4"
+          style={rect}
+        >
+          <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-neutral-900/90 px-4 py-2.5 shadow-2xl backdrop-blur">
+            <div className="text-center">
+              <p className="truncate text-[14px] font-semibold leading-tight text-white">
+                {info?.ownerName || info?.title || "Window"}
+              </p>
+              <p className="truncate text-[11px] leading-tight text-neutral-400">
+                {info?.title && `${info.title} · `}
+                {info && `${Math.round(info.width)} × ${Math.round(info.height)}`}
+              </p>
             </div>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void startRecording()}
-              className="pointer-events-auto flex items-center gap-2.5 rounded-full bg-red-600 px-6 py-3 text-[15px] font-semibold text-white shadow-2xl ring-4 ring-red-600/30 transition-all hover:bg-red-500 hover:ring-red-500/30 disabled:opacity-50"
-            >
-              {busy ? (
-                <LoaderCircle className="h-4.5 w-4.5 animate-spin" />
-              ) : (
-                <Circle className="h-4.5 w-4.5" fill="currentColor" />
-              )}
-              {busy ? "Starting…" : "Start recording"}
-            </button>
           </div>
-        ) : (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void startRecording()}
+            className="pointer-events-auto flex items-center gap-2.5 rounded-full bg-red-600 px-6 py-3 text-[15px] font-semibold text-white shadow-2xl ring-4 ring-red-600/30 transition-all hover:bg-red-500 hover:ring-red-500/30 disabled:opacity-50"
+          >
+            {busy ? (
+              <LoaderCircle className="h-4.5 w-4.5 animate-spin" />
+            ) : (
+              <Circle className="h-4.5 w-4.5" fill="currentColor" />
+            )}
+            {busy ? "Starting…" : "Start recording"}
+          </button>
+        </div>
+      ) : (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="rounded-lg bg-black/70 px-4 py-2 text-[13px] text-neutral-200 shadow-xl backdrop-blur">
             Move your cursor over a window to record it
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {error && (
         <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-lg bg-red-950/90 px-3 py-2 text-[12px] text-red-200 shadow-xl">
