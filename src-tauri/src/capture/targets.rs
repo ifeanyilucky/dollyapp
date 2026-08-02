@@ -3,6 +3,7 @@
 //! `CGWindowID` and isn't worth serializing over IPC as-is).
 
 use std::ffi::c_void;
+use std::os::raw::c_char;
 
 use serde::{Deserialize, Serialize};
 
@@ -203,9 +204,18 @@ struct CgRect {
 }
 
 const K_CG_WINDOW_LIST_OPTION_INCLUDING_WINDOW: u32 = 1 << 3;
+const K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY: u32 = 1 << 0;
+const K_CG_WINDOW_LIST_OPTION_EXCLUDE_DESKTOP_ELEMENTS: u32 = 1 << 4;
+const K_CF_NUMBER_SINT32: i32 = 3;
+const K_CF_STRING_ENCODING_UTF8: u32 = 0x0800_0100;
 
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
+    static kCGWindowNumber: CfStringRef;
+    static kCGWindowOwnerPID: CfStringRef;
+    static kCGWindowOwnerName: CfStringRef;
+    static kCGWindowName: CfStringRef;
+    static kCGWindowLayer: CfStringRef;
     static kCGWindowBounds: CfStringRef;
     fn CGWindowListCopyWindowInfo(option: u32, relative_to_window: u32) -> CfArrayRef;
     fn CGRectMakeWithDictionaryRepresentation(dict: CfDictionaryRef, rect: *mut CgRect) -> u8;
@@ -216,6 +226,15 @@ extern "C" {
     fn CFArrayGetCount(array: CfArrayRef) -> CfIndex;
     fn CFArrayGetValueAtIndex(array: CfArrayRef, idx: CfIndex) -> *const c_void;
     fn CFDictionaryGetValue(dict: CfDictionaryRef, key: *const c_void) -> *const c_void;
+    fn CFNumberGetValue(number: CfTypeRef, the_type: i32, value_ptr: *mut c_void) -> u8;
+    fn CFStringGetCStringPtr(string: CfStringRef, encoding: u32) -> *const c_char;
+    fn CFStringGetLength(string: CfStringRef) -> CfIndex;
+    fn CFStringGetCString(
+        string: CfStringRef,
+        buffer: *mut c_char,
+        buffer_size: CfIndex,
+        encoding: u32,
+    ) -> u8;
     fn CFRelease(cf: CfTypeRef);
 }
 
@@ -230,25 +249,165 @@ fn window_origin(window_id: u32) -> Option<(f64, f64)> {
                 return None;
             }
             let dict = CFArrayGetValueAtIndex(array, 0);
-            let bounds_dict = CFDictionaryGetValue(dict, kCGWindowBounds);
-            if bounds_dict.is_null() {
-                return None;
-            }
-            let mut rect = CgRect {
-                origin: CgPoint { x: 0.0, y: 0.0 },
-                size: CgSize {
-                    width: 0.0,
-                    height: 0.0,
-                },
-            };
-            let ok = CGRectMakeWithDictionaryRepresentation(bounds_dict, &mut rect as *mut CgRect);
-            if ok != 0 {
-                Some((rect.origin.x, rect.origin.y))
-            } else {
-                None
-            }
+            let rect = dict_rect(dict)?;
+            Some((rect.origin.x, rect.origin.y))
         })();
         CFRelease(array);
         result
+    }
+}
+
+/// A capturable window under the cursor, with everything the window
+/// picker's hover overlay needs to highlight it and label it — owner
+/// (the app, e.g. "Google Chrome"), title, and its current on-screen
+/// size. `x`/`y`/`width`/`height` are in the same global point space as
+/// `cursor.json` and `display_bounds`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowHitInfo {
+    pub window_id: u32,
+    pub owner_name: String,
+    pub title: String,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Topmost on-screen window whose bounds contain `(x, y)`, or `None`.
+/// `CGWindowListCopyWindowInfo` lists on-screen windows front-to-back, so
+/// the first match is the frontmost. Windows owned by this process (the
+/// toolbar, the picker overlay itself, the main window) and non-user
+/// windows (menubar/dock/desktop — anything with a `kCGWindowLayer` other
+/// than the normal 0) are skipped. Window names are redacted to the app
+/// name unless Screen Recording permission is granted, which the toolbar
+/// (the picker's only entry point) guarantees.
+pub fn window_at_point(x: f64, y: f64) -> Option<WindowHitInfo> {
+    let own_pid = std::process::id() as i32;
+    unsafe {
+        let array = CGWindowListCopyWindowInfo(
+            K_CG_WINDOW_LIST_OPTION_ON_SCREEN_ONLY
+                | K_CG_WINDOW_LIST_OPTION_EXCLUDE_DESKTOP_ELEMENTS,
+            0,
+        );
+        if array.is_null() {
+            return None;
+        }
+        let result = (|| {
+            for i in 0..CFArrayGetCount(array) {
+                let dict = CFArrayGetValueAtIndex(array, i);
+
+                if dict_number(dict, kCGWindowLayer).unwrap_or(0) != 0 {
+                    continue;
+                }
+                if dict_number(dict, kCGWindowOwnerPID).unwrap_or(-1) == own_pid {
+                    continue;
+                }
+                let rect = match dict_rect(dict) {
+                    Some(rect) => rect,
+                    None => continue,
+                };
+                if rect.size.width <= 0.0
+                    || rect.size.height <= 0.0
+                    || x < rect.origin.x
+                    || x > rect.origin.x + rect.size.width
+                    || y < rect.origin.y
+                    || y > rect.origin.y + rect.size.height
+                {
+                    continue;
+                }
+
+                return Some(WindowHitInfo {
+                    window_id: dict_number(dict, kCGWindowNumber).unwrap_or(0) as u32,
+                    owner_name: dict_string(dict, kCGWindowOwnerName).unwrap_or_default(),
+                    title: dict_string(dict, kCGWindowName).unwrap_or_default(),
+                    x: rect.origin.x,
+                    y: rect.origin.y,
+                    width: rect.size.width,
+                    height: rect.size.height,
+                });
+            }
+            None
+        })();
+        CFRelease(array);
+        result
+    }
+}
+
+/// `window_at_point` at the cursor's current location — seeds the picker
+/// overlay with the window under the cursor the moment it opens, without
+/// waiting for the first `mousemove`.
+pub fn window_at_cursor() -> Option<WindowHitInfo> {
+    let Ok(source) = core_graphics::event_source::CGEventSource::new(
+        core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
+    ) else {
+        return None;
+    };
+    let Ok(event) = core_graphics::event::CGEvent::new(source) else {
+        return None;
+    };
+    let loc = event.location();
+    window_at_point(loc.x, loc.y)
+}
+
+unsafe fn dict_number(dict: CfDictionaryRef, key: CfStringRef) -> Option<i32> {
+    let value = CFDictionaryGetValue(dict, key);
+    if value.is_null() {
+        return None;
+    }
+    let mut number: i32 = 0;
+    let ok = CFNumberGetValue(value, K_CF_NUMBER_SINT32, &mut number as *mut i32 as *mut c_void);
+    if ok != 0 {
+        Some(number)
+    } else {
+        None
+    }
+}
+
+unsafe fn dict_string(dict: CfDictionaryRef, key: CfStringRef) -> Option<String> {
+    let value = CFDictionaryGetValue(dict, key);
+    if value.is_null() {
+        return None;
+    }
+    // `CFStringGetCStringPtr` is the zero-copy fast path but can return
+    // NULL (some strings' internal storage isn't directly exposable), so
+    // fall back to a buffered copy via `CFStringGetCString`.
+    let ptr = CFStringGetCStringPtr(value, K_CF_STRING_ENCODING_UTF8);
+    if !ptr.is_null() {
+        return Some(std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned());
+    }
+    let length = CFStringGetLength(value);
+    // Up to 4 bytes per UTF-8 code point, plus room for the NUL.
+    let mut buffer = vec![0u8; length.max(0) as usize * 4 + 1];
+    let ok = CFStringGetCString(
+        value,
+        buffer.as_mut_ptr().cast(),
+        buffer.len() as CfIndex,
+        K_CF_STRING_ENCODING_UTF8,
+    );
+    if ok != 0 {
+        let len = buffer.iter().position(|&b| b == 0).unwrap_or(buffer.len());
+        return Some(String::from_utf8_lossy(&buffer[..len]).into_owned());
+    }
+    None
+}
+
+unsafe fn dict_rect(dict: CfDictionaryRef) -> Option<CgRect> {
+    let bounds = CFDictionaryGetValue(dict, kCGWindowBounds);
+    if bounds.is_null() {
+        return None;
+    }
+    let mut rect = CgRect {
+        origin: CgPoint { x: 0.0, y: 0.0 },
+        size: CgSize {
+            width: 0.0,
+            height: 0.0,
+        },
+    };
+    let ok = CGRectMakeWithDictionaryRepresentation(bounds, &mut rect as *mut CgRect);
+    if ok != 0 {
+        Some(rect)
+    } else {
+        None
     }
 }

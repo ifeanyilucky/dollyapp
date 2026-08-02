@@ -8,9 +8,11 @@ mod capture;
 mod editor;
 mod permissions;
 mod recorder;
+mod window_picker;
 
 pub use area_selector::*;
 pub use capture::*;
 pub use editor::*;
 pub use permissions::*;
 pub use recorder::*;
+pub use window_picker::*;
