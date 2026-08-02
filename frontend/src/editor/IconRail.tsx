@@ -23,10 +23,21 @@ export type ToolId = (typeof TOOLS)[number]["id"];
  * `active`/the rendered panel don't change) since there's no panel behind
  * them yet (webcam overlay, comments, audio mixing, shortcut config,
  * sharing).
+ *
+ * `active` is `null` while a timeline slice/zoom-keyframe editor is
+ * showing instead of the Style/Cursor panel — none of these icons are
+ * "selected" in that case (selecting a clip on the timeline isn't a rail
+ * tool), so none should render highlighted.
  */
-export function IconRail({ active, onSelect }: { active: ToolId; onSelect: (id: ToolId) => void }) {
+export function IconRail({
+  active,
+  onSelect,
+}: {
+  active: ToolId | null;
+  onSelect: (id: ToolId) => void;
+}) {
   return (
-    <div className="flex w-11 min-h-0 shrink-0 flex-col items-center justify-center gap-1 overflow-y-auto rounded-xl border border-neutral-800/80 bg-neutral-950/70 py-1">
+    <div className="flex w-11 min-h-0 shrink-0 flex-col items-center gap-1 overflow-y-auto rounded-xl border border-neutral-800/80 bg-neutral-950/70 py-1">
       {TOOLS.map(({ id, icon: Icon, label }) => {
         const wired = WIRED_TOOLS.has(id);
         return (

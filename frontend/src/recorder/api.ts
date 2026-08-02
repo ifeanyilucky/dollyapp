@@ -66,3 +66,14 @@ export function setMicEnabled(enabled: boolean): Promise<void> {
 export function closeToolbar(): Promise<void> {
   return invoke("close_toolbar");
 }
+
+/** Reports the visible pill's bounds (window-local, logical/CSS px —
+ * straight from `getBoundingClientRect()`) so the Rust side can keep the
+ * toolbar window's OS-level click-through flag in sync (see
+ * `toolbar::spawn_hit_test_loop`) — the window itself is much bigger than
+ * the pill (room for the Display dropdown to render into), and without
+ * this the invisible remainder would block clicks into whatever's behind
+ * it on screen. */
+export function setToolbarHitRect(x: number, y: number, width: number, height: number): Promise<void> {
+  return invoke("set_toolbar_hit_rect", { x, y, width, height });
+}

@@ -97,16 +97,26 @@ export function Timeline({
   }
 
   function handleTrackMouseMove(e: React.MouseEvent) {
-    if (!splitArmed) return;
+    // Don't fight an in-progress trim/move drag with a scrub-preview seek.
+    if (activeDrag) return;
     const s = secondsAtClientX(e.clientX);
     setHoverS(s);
-    // Live scrub preview — the canvas shows exactly the frame you're
-    // about to split at, not just a line on the ruler.
+    // Live scrub preview — the canvas shows exactly the frame under the
+    // cursor, whether that's to line up a split or just to look around.
     onSeek(s);
   }
 
   function handleTrackMouseLeave() {
     setHoverS(null);
+  }
+
+  /** Fires for clicks on the ruler or any empty gap between zoom
+   * keyframes — slices and zoom keyframes handle (and stop propagation
+   * for) their own clicks below, this is the scrub-to-here fallback for
+   * everywhere else on the track. */
+  function handleTrackClick(e: React.MouseEvent) {
+    if (splitArmed) return;
+    onSeek(secondsAtClientX(e.clientX));
   }
 
   /**
@@ -167,6 +177,12 @@ export function Timeline({
   function handleZoomMove(e: React.PointerEvent<HTMLDivElement>, kf: ZoomKeyframe, index: number) {
     const origStartS = (kf.startT - videoStartUs) / 1e6;
     const durS = (kf.endT - kf.startT) / 1e6;
+    // Captured now (not read from `e` inside the click callback below,
+    // which fires later, after the event object may have been reused/
+    // cleared by React) — a "click" barely moved from this position by
+    // definition (see `CLICK_MOVE_THRESHOLD_PX`), so it's a fine stand-in
+    // for the actual pointerup position.
+    const clickX = e.clientX;
     beginDrag(
       e,
       { kind: "zoom-move", index },
@@ -174,7 +190,10 @@ export function Timeline({
         const newStart = clampS(origStartS + deltaS, 0, safeDuration - durS);
         commitZoom(index, newStart, newStart + durS);
       },
-      () => onSelectZoomKeyframe(index),
+      () => {
+        onSeek(secondsAtClientX(clickX));
+        onSelectZoomKeyframe(index);
+      },
     );
   }
 
@@ -204,8 +223,12 @@ export function Timeline({
 
   function handleSliceClick(e: React.MouseEvent, slice: ClipSlice) {
     e.stopPropagation();
-    if (splitArmed) onSplitClip(secondsAtClientX(e.clientX));
-    else onSelectSlice(slice.id);
+    if (splitArmed) {
+      onSplitClip(secondsAtClientX(e.clientX));
+    } else {
+      onSeek(secondsAtClientX(e.clientX));
+      onSelectSlice(slice.id);
+    }
   }
 
   function handleZoomClick(e: React.MouseEvent, index: number) {
@@ -271,6 +294,7 @@ export function Timeline({
         className="relative"
         onMouseMove={handleTrackMouseMove}
         onMouseLeave={handleTrackMouseLeave}
+        onClick={handleTrackClick}
       >
         <div className="relative h-4 text-[10px] text-neutral-600">
           {ticks.map((t) => (
@@ -394,16 +418,26 @@ export function Timeline({
           })}
         </div>
 
-        {splitArmed && hoverS !== null && (
-          <div
-            className="pointer-events-none absolute bottom-0 top-4 w-px border-l border-dashed border-indigo-300"
-            style={{ left: `${clampPct((hoverS / safeDuration) * 100)}%` }}
-          >
-            <span className="absolute -top-4 left-1/2 flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full bg-indigo-400 text-neutral-950">
-              <Scissors className="h-3 w-3" />
-            </span>
-          </div>
-        )}
+        {hoverS !== null &&
+          (splitArmed ? (
+            <div
+              className="pointer-events-none absolute bottom-0 top-4 w-px border-l border-dashed border-indigo-300"
+              style={{ left: `${clampPct((hoverS / safeDuration) * 100)}%` }}
+            >
+              <span className="absolute -top-4 left-1/2 flex h-5 w-5 -translate-x-1/2 items-center justify-center rounded-full bg-indigo-400 text-neutral-950">
+                <Scissors className="h-3 w-3" />
+              </span>
+            </div>
+          ) : (
+            // Plain scrub-hover indicator — distinct from both the split
+            // line above and the actual (solid white) playhead below, so
+            // hovering to preview a spot doesn't look like it already
+            // committed the seek.
+            <div
+              className="pointer-events-none absolute bottom-0 top-4 w-px bg-neutral-400/60"
+              style={{ left: `${clampPct((hoverS / safeDuration) * 100)}%` }}
+            />
+          ))}
 
         <div
           className="pointer-events-none absolute bottom-0 top-0 w-px bg-neutral-100"

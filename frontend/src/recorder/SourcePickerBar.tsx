@@ -9,11 +9,8 @@ import {
   MicOff,
   Monitor,
   MonitorSpeaker,
-  Pause,
-  Play,
   Settings,
   Smartphone,
-  Square,
   Video,
   X,
 } from "lucide-react";
@@ -46,30 +43,27 @@ interface WindowSelectedPayload {
 }
 
 /**
- * The floating toolbar's contents (see `ToolbarView`) — source/device
- * picker (full display, a specific window, a custom-dragged area, or not
- * built, a connected device), camera/mic/system-audio toggles, and the
- * start/stop/pause controls. Mic is real; camera and system audio aren't
- * implemented anywhere in the capture pipeline yet (see `recorder::start`'s
- * doc comment), so those two stay visibly inert rather than pretending to
+ * The floating toolbar's contents *before* a recording starts (see
+ * `ToolbarView`, which swaps to `RecordingControls` once one is in
+ * progress — the source/target picker doesn't make sense against an
+ * already-fixed capture target) — source/device picker (full display, a
+ * specific window, a custom-dragged area, or not built, a connected
+ * device), camera/mic/system-audio toggles, and the start-recording
+ * button. Mic is real; camera and system audio aren't implemented
+ * anywhere in the capture pipeline yet (see `recorder::start`'s doc
+ * comment), so those two stay visibly inert rather than pretending to
  * work.
  */
 export function SourcePickerBar({
   disabled,
-  isRecording,
-  isPaused,
   busy,
   onClose,
-  onToggleRecording,
-  onTogglePause,
+  onStartRecording,
 }: {
   disabled: boolean;
-  isRecording: boolean;
-  isPaused: boolean;
   busy: boolean;
   onClose: () => void;
-  onToggleRecording: () => void;
-  onTogglePause: () => void;
+  onStartRecording: () => void;
 }) {
   const [targets, setTargets] = useState<TargetInfo[]>([]);
   const [mode, setMode] = useState<SourceMode>("display");
@@ -258,32 +252,15 @@ export function SourcePickerBar({
 
         <div className="mx-1 h-8 w-px bg-neutral-800" />
 
-        {isRecording && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={onTogglePause}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
-            aria-label={isPaused ? "Resume recording" : "Pause recording"}
-            title={isPaused ? "Resume" : "Pause"}
-          >
-            {isPaused ? <Play className="h-4 w-4" fill="currentColor" /> : <Pause className="h-4 w-4" fill="currentColor" />}
-          </button>
-        )}
-
         <button
           type="button"
           disabled={busy}
-          onClick={onToggleRecording}
+          onClick={onStartRecording}
           className="flex h-8 w-8 items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-500 disabled:opacity-40"
-          aria-label={isRecording ? "Stop recording" : "Start recording"}
-          title={isRecording ? "Stop recording" : "Start recording"}
+          aria-label="Start recording"
+          title="Start recording"
         >
-          {isRecording ? (
-            <Square className="h-3.5 w-3.5" fill="currentColor" />
-          ) : (
-            <Circle className="h-4 w-4" fill="currentColor" />
-          )}
+          <Circle className="h-4 w-4" fill="currentColor" />
         </button>
 
         <div className="mx-1 h-8 w-px bg-neutral-800" />

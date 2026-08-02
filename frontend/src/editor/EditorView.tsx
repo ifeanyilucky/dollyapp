@@ -443,7 +443,7 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
             className="max-h-full max-w-full rounded-lg"
           />
         </div>
-        <IconRail active={activeTool} onSelect={setActiveTool} />
+        <IconRail active={selectedSlice || selectedZoomKeyframe ? null : activeTool} onSelect={setActiveTool} />
         {selectedSlice ? (
           <SliceEditorPanel
             slice={selectedSlice}
