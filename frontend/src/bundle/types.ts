@@ -18,6 +18,11 @@ export interface RecordingMeta {
   /** mach_absolute_time-derived epoch, in microseconds. Every cursor.json
    * timestamp is relative to this — see ARCHITECTURE.md "Recording format". */
   clockEpoch: number;
+  /** `t` (relative to clockEpoch) of the first frame written to
+   * screen.mov. An HTML `<video>` element's `currentTime` is relative to
+   * *that* frame, not clockEpoch, so map it onto cursor.json timestamps
+   * with `t = currentTime * 1_000_000 + videoStartUs`. */
+  videoStartUs: number;
   display: DisplayInfo;
   durationUs: number;
   hasWebcam: boolean;
