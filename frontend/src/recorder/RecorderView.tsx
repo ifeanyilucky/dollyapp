@@ -1,25 +1,21 @@
-import { MicToggle } from "./MicToggle";
-import { TargetPicker } from "./TargetPicker";
+import { SourcePickerBar } from "./SourcePickerBar";
 import { useRecordingState } from "./useRecordingState";
 
 /**
- * Minimal recorder screen — a Start/Stop button plus pause/resume, all
- * reflecting the same state the tray menu and `⌥⌘2` control (PRD §9: menu
- * bar is the primary entry point, this window included for completeness).
- * Region selection isn't built yet — `TargetPicker` only covers whole
- * displays/windows. System audio isn't built yet either (see
- * `src-tauri/src/recorder`'s doc comment) — `MicToggle` is mic-only.
+ * Idle/recording screen — `SourcePickerBar` (display/window/area/device +
+ * camera/mic/system-audio) plus a Start/Stop/Pause control, all reflecting
+ * the same state the tray menu and `⌥⌘2` control (PRD §9: menu bar is the
+ * primary entry point, this window included for completeness).
  */
 export function RecorderView({ onFinished }: { onFinished: (bundlePath: string) => void }) {
   const { isRecording, isPaused, busy, error, start, stop, togglePause } =
     useRecordingState(onFinished);
 
   return (
-    <main className="flex h-screen w-screen flex-col items-center justify-center gap-4 bg-neutral-950 text-neutral-300">
+    <main className="flex h-screen w-screen flex-col items-center justify-center gap-6 bg-neutral-950 text-neutral-300">
       <h1 className="text-lg font-medium text-neutral-100">Dolly</h1>
 
-      <TargetPicker disabled={isRecording || busy} />
-      <MicToggle disabled={isRecording || busy} />
+      <SourcePickerBar disabled={isRecording || busy} />
 
       <div className="flex items-center gap-2">
         <button
