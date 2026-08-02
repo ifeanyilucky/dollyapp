@@ -2,13 +2,7 @@ import { Pause, Play, Scissors, SkipBack, SkipForward } from "lucide-react";
 import { useRef, useState } from "react";
 import type { ZoomKeyframe } from "../motion-engine";
 import type { ClipSlice } from "./slices";
-
-function formatTime(seconds: number): string {
-  if (!Number.isFinite(seconds)) return "0:00";
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
+import { formatTime } from "./time";
 
 /** Picks a tick spacing that keeps ~6-12 labeled ticks regardless of clip
  * length, rounded to a "nice" number of seconds. */

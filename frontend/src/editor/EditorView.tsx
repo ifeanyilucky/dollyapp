@@ -14,6 +14,7 @@ import { SceneRenderer, shiftCursorTrack } from "./renderer";
 import { initialSlices, resizeSlices, sliceAt, splitSliceAt, type ClipSlice } from "./slices";
 import { SliceEditorPanel } from "./SliceEditorPanel";
 import { StylePanel } from "./StylePanel";
+import { PreviewControls } from "./PreviewControls";
 import { Timeline } from "./Timeline";
 import { nextPlaybackRate, TopBar } from "./TopBar";
 import { ZoomEditorPanel } from "./ZoomEditorPanel";
@@ -86,6 +87,10 @@ export function EditorView({
   const [showSidebar, setShowSidebar] = useState(true);
   const [showTimeline, setShowTimeline] = useState(true);
   const [previewMode, setPreviewMode] = useState(false);
+  // Whether `PreviewControls` (the floating play/pause bar) is faded in —
+  // see the mouse-activity effect below, next to the other preview-mode
+  // state. Only meaningful while `previewMode` is true.
+  const [previewControlsVisible, setPreviewControlsVisible] = useState(true);
 
   // The undoable document — style, cursor overlay settings, output aspect,
   // zoom keyframes, clip trim, and slices. See the module doc comment and
@@ -147,6 +152,9 @@ export function EditorView({
   // from `tick`'s own `tUs` each frame and reset on seek, so a scrub never
   // replays every click between the old and new position at once.
   const lastSoundCheckTUsRef = useRef(0);
+  // Drive `PreviewControls`' fade — see the mouse-activity effect below.
+  const previewHideTimerRef = useRef<number | null>(null);
+  const hoveringPreviewControlsRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
