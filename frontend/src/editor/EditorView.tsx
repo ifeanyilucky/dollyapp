@@ -4,6 +4,14 @@ import { generateZoomKeyframes } from "../motion-engine";
 import { aspectRatioPreset, type AspectRatioId } from "./aspect";
 import { deleteRecording, loadRecording, revealInFinder, type LoadedRecording } from "./api";
 import { IconRail } from "./IconRail";
+import {
+  addRegion,
+  regionAt,
+  removeRegion,
+  SPEED_REGION_RATES,
+  type CutRegion,
+  type SpeedRegion,
+} from "./regions";
 import { SceneRenderer } from "./renderer";
 import { StylePanel } from "./StylePanel";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
@@ -18,8 +26,9 @@ const MAX_PREVIEW_HEIGHT = 560;
  * engine export will eventually use (ARCHITECTURE.md, "preview and export
  * must never diverge"), with auto-generated zoom/pan that follows the live
  * cursor, an animated cursor overlay, background/padding/shadow styling,
- * and an output aspect ratio switch. No trim/cut/speed-ramping or true
- * export (motion baked into an output file) yet.
+ * an output aspect ratio switch, and cut/speed regions. No true export
+ * (motion baked into an output file) yet — cut/speed, like everything
+ * else here, only affects preview playback.
  */
 export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClose: () => void }) {
   const [loaded, setLoaded] = useState<LoadedRecording | null>(null);
@@ -31,18 +40,26 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   const [showCursor, setShowCursor] = useState(true);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [aspectRatioId, setAspectRatioId] = useState<AspectRatioId>("original");
+  const [cutRegions, setCutRegions] = useState<CutRegion[]>([]);
+  const [speedRegions, setSpeedRegions] = useState<SpeedRegion[]>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<SceneRenderer | null>(null);
-  // Style/cursor-visibility changes can fire rapidly (slider drags) or
-  // need to be read from a rAF loop that shouldn't restart every tick —
-  // refs let `tick` always see the latest value without becoming a
-  // dependency of the render-loop effect.
+  // Style/cursor-visibility/region changes can fire rapidly (slider drags,
+  // region drags) or need to be read from a rAF loop that shouldn't
+  // restart every tick — refs let `tick` always see the latest value
+  // without becoming a dependency of the render-loop effect.
   const styleRef = useRef(style);
   styleRef.current = style;
   const showCursorRef = useRef(showCursor);
   showCursorRef.current = showCursor;
+  const playbackRateRef = useRef(playbackRate);
+  playbackRateRef.current = playbackRate;
+  const cutRegionsRef = useRef(cutRegions);
+  cutRegionsRef.current = cutRegions;
+  const speedRegionsRef = useRef(speedRegions);
+  speedRegionsRef.current = speedRegions;
 
   useEffect(() => {
     let cancelled = false;
@@ -110,6 +127,27 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
     const tick = () => {
       const renderer = rendererRef.current;
       if (renderer && video.readyState >= 2) {
+        // Cut regions aren't spliced out of the underlying file (there's
+        // no export pipeline to bake that into yet) — instead, playback
+        // simply jumps over one the instant it's entered, whether that's
+        // from continuous playback reaching it or a seek landing inside
+        // it. `duration || video.currentTime` guards the (astronomically
+        // unlikely) case where a region's own end is right at the clip's
+        // end and floating-point rounding would otherwise land exactly on
+        // `duration`, which the video element can react to as "ended".
+        const cut = regionAt(cutRegionsRef.current, video.currentTime);
+        if (cut) {
+          video.currentTime = Math.min(cut.endS, video.duration || video.currentTime);
+          raf = requestAnimationFrame(tick);
+          return;
+        }
+
+        const speed = regionAt(speedRegionsRef.current, video.currentTime);
+        const effectiveRate = playbackRateRef.current * (speed?.rate ?? 1);
+        if (Math.abs(video.playbackRate - effectiveRate) > 1e-6) {
+          video.playbackRate = effectiveRate;
+        }
+
         const tUs = video.currentTime * 1_000_000 + loaded.meta.videoStartUs;
         renderer.draw(ctx, video, tUs, styleRef.current, showCursorRef.current);
         setCurrentTime(video.currentTime);
@@ -136,15 +174,34 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   }
 
   function cyclePlaybackRate() {
-    const next = nextPlaybackRate(playbackRate);
-    setPlaybackRate(next);
-    if (videoRef.current) videoRef.current.playbackRate = next;
+    // Doesn't set `video.playbackRate` directly — the render loop already
+    // does that every tick, combining this with any active speed region's
+    // multiplier (see `tick`'s `effectiveRate`).
+    setPlaybackRate(nextPlaybackRate(playbackRate));
   }
 
   async function handleDelete() {
     if (!window.confirm("Delete this recording? This can't be undone.")) return;
     await deleteRecording(bundlePath);
     onClose();
+  }
+
+  function addCutRegion(region: CutRegion) {
+    setCutRegions((regions) => addRegion(regions, region));
+  }
+
+  function addSpeedRegion(region: SpeedRegion) {
+    setSpeedRegions((regions) => addRegion(regions, region));
+  }
+
+  function cycleSpeedRegionRate(id: string) {
+    setSpeedRegions((regions) =>
+      regions.map((r) => {
+        if (r.id !== id) return r;
+        const idx = SPEED_REGION_RATES.indexOf(r.rate);
+        return { ...r, rate: SPEED_REGION_RATES[(idx + 1) % SPEED_REGION_RATES.length] };
+      }),
+    );
   }
 
   if (error) {
@@ -226,6 +283,13 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
           onSeek={handleSeek}
           zoomKeyframes={zoomKeyframes}
           videoStartUs={loaded.meta.videoStartUs}
+          cutRegions={cutRegions}
+          speedRegions={speedRegions}
+          onAddCut={addCutRegion}
+          onRemoveCut={(id) => setCutRegions((regions) => removeRegion(regions, id))}
+          onAddSpeed={addSpeedRegion}
+          onRemoveSpeed={(id) => setSpeedRegions((regions) => removeRegion(regions, id))}
+          onCycleSpeedRate={cycleSpeedRegionRate}
         />
       </div>
     </div>
