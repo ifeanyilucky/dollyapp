@@ -1,25 +1,22 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useEffect, useRef, useState } from "react";
-import { loadRecording, type LoadedRecording } from "./api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { generateZoomKeyframes } from "../motion-engine";
+import { loadRecording, revealInFinder, type LoadedRecording } from "./api";
 import { SceneRenderer } from "./renderer";
 import { StylePanel } from "./StylePanel";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
+import { Timeline } from "./Timeline";
+import { TopBar } from "./TopBar";
 
-const MAX_PREVIEW_WIDTH = 900;
-
-function formatTime(seconds: number): string {
-  if (!Number.isFinite(seconds)) return "0:00";
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
+const MAX_PREVIEW_WIDTH = 760;
 
 /**
  * Post-recording preview: plays `screen.mov` through the same motion
  * engine export will eventually use (ARCHITECTURE.md, "preview and export
  * must never diverge"), with auto-generated zoom/pan that follows the live
  * cursor, an animated cursor overlay, and background/padding/shadow
- * styling. No aspect-ratio switching, trim/cut, or export yet.
+ * styling. No aspect-ratio switching, trim/cut, or true export (motion
+ * baked into an output file) yet.
  */
 export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClose: () => void }) {
   const [loaded, setLoaded] = useState<LoadedRecording | null>(null);
@@ -67,6 +64,14 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
       cursorTrack: loaded.cursorTrack,
     });
     rendererRef.current.resetAt(loaded.meta.videoStartUs);
+  }, [loaded]);
+
+  // Same keyframes SceneRenderer generates internally, recomputed here
+  // purely for the timeline's zoom-track visualization — cheap pure
+  // function, not worth threading a getter through SceneRenderer for.
+  const zoomKeyframes = useMemo(() => {
+    if (!loaded) return [];
+    return generateZoomKeyframes(loaded.cursorTrack, { factor: 1 });
   }, [loaded]);
 
   // Render loop: reads `video.currentTime` directly every animation
@@ -132,49 +137,48 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   const canvasHeight = Math.round(canvasWidth / aspect);
 
   return (
-    <div className="flex h-screen w-screen items-center justify-center gap-6 bg-neutral-950 p-6 text-neutral-300">
-      <div className="flex flex-col items-center gap-4">
-        <div className="overflow-hidden rounded-lg">
-          <canvas ref={canvasRef} width={canvasWidth} height={canvasHeight} className="block" />
-        </div>
+    <div className="flex h-screen w-screen flex-col bg-neutral-950 text-neutral-300">
+      <TopBar
+        title={bundlePath.split("/").pop() ?? bundlePath}
+        aspectLabel={aspect >= 1 ? "Wide 16:9" : "Vertical 9:16"}
+        onRevealInFinder={() => void revealInFinder(bundlePath)}
+        onClose={onClose}
+      />
 
-        {/* Hidden — used purely as a decoded-frame source for the canvas. */}
-        <video
-          ref={videoRef}
-          src={convertFileSrc(loaded.screenVideoPath)}
-          className="hidden"
-          preload="auto"
-          onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
-        />
-
-        <div className="flex w-full items-center gap-3" style={{ maxWidth: canvasWidth }}>
-          <button
-            type="button"
-            onClick={togglePlay}
-            className="rounded-md bg-neutral-100 px-3 py-1.5 text-sm font-medium text-neutral-900"
-          >
-            {isPlaying ? "Pause" : "Play"}
-          </button>
-          <span className="w-10 text-right text-xs text-neutral-500">{formatTime(currentTime)}</span>
-          <input
-            type="range"
-            min={0}
-            max={duration || 0}
-            step={0.01}
-            value={currentTime}
-            onChange={(e) => handleSeek(Number(e.target.value))}
-            className="flex-1 accent-neutral-100"
+      <div className="flex flex-1 items-center justify-center gap-6 overflow-hidden p-6">
+        <div className="flex h-full flex-1 items-center justify-center">
+          <canvas
+            ref={canvasRef}
+            width={canvasWidth}
+            height={canvasHeight}
+            className="max-h-full max-w-full rounded-lg"
           />
-          <span className="w-10 text-xs text-neutral-500">{formatTime(duration)}</span>
-          <button type="button" onClick={onClose} className="ml-2 text-xs text-neutral-500 underline">
-            Back
-          </button>
         </div>
+        <StylePanel style={style} onChange={setStyle} />
       </div>
 
-      <StylePanel style={style} onChange={setStyle} />
+      {/* Hidden — used purely as a decoded-frame source for the canvas. */}
+      <video
+        ref={videoRef}
+        src={convertFileSrc(loaded.screenVideoPath)}
+        className="hidden"
+        preload="auto"
+        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+        onPlay={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+      />
+
+      <div className="px-6 pb-6">
+        <Timeline
+          duration={duration}
+          currentTime={currentTime}
+          isPlaying={isPlaying}
+          onTogglePlay={togglePlay}
+          onSeek={handleSeek}
+          zoomKeyframes={zoomKeyframes}
+          videoStartUs={loaded.meta.videoStartUs}
+        />
+      </div>
     </div>
   );
 }

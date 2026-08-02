@@ -13,3 +13,7 @@ export interface LoadedRecording {
 export function loadRecording(bundlePath: string): Promise<LoadedRecording> {
   return invoke("load_recording", { bundlePath });
 }
+
+export function revealInFinder(bundlePath: string): Promise<void> {
+  return invoke("reveal_in_finder", { bundlePath });
+}
