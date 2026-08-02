@@ -31,7 +31,20 @@ function App() {
 
   return (
     <PermissionsGate onGranted={() => void enterToolbarMode()}>
-      {openBundlePath && <EditorView bundlePath={openBundlePath} onClose={closeEditor} />}
+      {openBundlePath && (
+        <EditorView
+          // Remounts the whole editor on switch (folder dropdown's "Show
+          // previous projects") instead of hot-swapping `bundlePath` in
+          // place — the editor holds a lot of per-recording state (slices,
+          // trim, zoom keyframes, style, ...) that only resets correctly
+          // by tearing down and remounting, not by an effect keyed on the
+          // path alone.
+          key={openBundlePath}
+          bundlePath={openBundlePath}
+          onClose={closeEditor}
+          onOpenProject={setOpenBundlePath}
+        />
+      )}
     </PermissionsGate>
   );
 }

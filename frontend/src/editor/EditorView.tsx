@@ -33,7 +33,19 @@ const FALLBACK_PREVIEW_HEIGHT = 560;
  * setting baked in (zoom keyframes, trim, slices, styling, cursor overlay,
  * aspect) to wherever the user picks in a save dialog.
  */
-export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClose: () => void }) {
+export function EditorView({
+  bundlePath,
+  onClose,
+  onOpenProject,
+}: {
+  bundlePath: string;
+  onClose: () => void;
+  /** Switches to a different past recording (folder dropdown's "Show
+   * previous projects") — the parent is expected to remount this component
+   * (e.g. `key={bundlePath}`) rather than have it hot-swap in place, so
+   * every piece of per-recording state below resets cleanly. */
+  onOpenProject: (bundlePath: string) => void;
+}) {
   const [loaded, setLoaded] = useState<LoadedRecording | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -466,6 +478,7 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
         exporting={exporting}
         exportProgress={exportProgress}
         onRevealInFinder={() => void revealInFinder(bundlePath)}
+        onOpenProject={onOpenProject}
         onDelete={() => void handleDelete()}
         onClose={onClose}
       />

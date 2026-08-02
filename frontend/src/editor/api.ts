@@ -22,6 +22,18 @@ export function deleteRecording(bundlePath: string): Promise<void> {
   return invoke("delete_recording", { bundlePath });
 }
 
+export interface RecentProject {
+  path: string;
+  name: string;
+}
+
+/** Recent recordings for the "Show previous projects" submenu in `TopBar`'s
+ * folder-icon dropdown — same `~/Movies/Dolly`, most-recent-first list the
+ * tray menu's own "Show previous projects" submenu uses. */
+export function listRecentProjects(limit: number): Promise<RecentProject[]> {
+  return invoke("list_recent_projects", { limit });
+}
+
 /** Records where the rendered export file should be written — paired with
  * `writeExportFile`, since the bytes themselves travel as a raw invoke body
  * (no room for a second path argument there). */

@@ -2,10 +2,12 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   Crop,
   Eye,
   EyeOff,
   Folder,
+  FolderClock,
   Gauge,
   Loader,
   Redo2,
@@ -15,7 +17,9 @@ import {
   Undo2,
   Upload,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { ASPECT_RATIO_PRESETS, type AspectRatioId } from "./aspect";
+import { listRecentProjects, type RecentProject } from "./api";
 
 const SPEED_STEPS = [1, 1.5, 2, 0.5];
 
@@ -40,6 +44,7 @@ export function TopBar({
   exporting,
   exportProgress,
   onRevealInFinder,
+  onOpenProject,
   onDelete,
   onClose,
 }: {
@@ -55,9 +60,18 @@ export function TopBar({
   /** 0..1 while exporting, for the button label — omit/undefined when idle. */
   exportProgress?: number;
   onRevealInFinder: () => void;
+  /** Switches the editor to a different past recording (from the folder
+   * dropdown's "Show previous projects" submenu) — a no-op if it's already
+   * the one being edited. */
+  onOpenProject: (bundlePath: string) => void;
   onDelete: () => void;
   onClose: () => void;
 }) {
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
+
+  useEffect(() => {
+    void listRecentProjects(10).then(setRecentProjects);
+  }, []);
   return (
     <div className="flex w-full flex-col border-b border-neutral-800/80 bg-neutral-950">
       <div className="flex items-center gap-1 px-4 py-2.5">
@@ -70,15 +84,56 @@ export function TopBar({
         >
           <ChevronLeft className="h-4 w-4" />
         </button>
-        <button
-          type="button"
-          onClick={onRevealInFinder}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-900 hover:text-neutral-300"
-          aria-label="Reveal in Finder"
-          title="Reveal in Finder"
-        >
-          <Folder className="h-4 w-4" />
-        </button>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <button
+              type="button"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-900 hover:text-neutral-300"
+              aria-label="Project folder options"
+              title="Project folder"
+            >
+              <Folder className="h-4 w-4" />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              sideOffset={6}
+              align="start"
+              className="z-50 min-w-50 rounded-lg border border-neutral-800 bg-neutral-900 p-1 text-neutral-200 shadow-2xl [&_.folder-item]:flex [&_.folder-item]:cursor-pointer [&_.folder-item]:items-center [&_.folder-item]:gap-2 [&_.folder-item]:rounded-md [&_.folder-item]:px-2.5 [&_.folder-item]:py-1.5 [&_.folder-item]:text-[12px] [&_.folder-item]:outline-none [&_.folder-item[data-highlighted]]:bg-neutral-800 [&_.folder-item[data-state=open]]:bg-neutral-800"
+            >
+              <DropdownMenu.Item className="folder-item" onSelect={onRevealInFinder}>
+                <Folder className="h-3.5 w-3.5" />
+                Reveal in Finder
+              </DropdownMenu.Item>
+
+              <DropdownMenu.Sub>
+                <DropdownMenu.SubTrigger className="folder-item justify-between">
+                  <span className="flex items-center gap-2">
+                    <FolderClock className="h-3.5 w-3.5" />
+                    Show previous projects
+                  </span>
+                  <ChevronRight className="h-3.5 w-3.5 text-neutral-500" />
+                </DropdownMenu.SubTrigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.SubContent
+                    sideOffset={4}
+                    className="z-50 max-h-72 min-w-55 overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900 p-1 text-neutral-200 shadow-2xl [&_.folder-item]:flex [&_.folder-item]:cursor-pointer [&_.folder-item]:items-center [&_.folder-item]:truncate [&_.folder-item]:rounded-md [&_.folder-item]:px-2.5 [&_.folder-item]:py-1.5 [&_.folder-item]:text-[12px] [&_.folder-item]:outline-none [&_.folder-item[data-highlighted]]:bg-neutral-800"
+                  >
+                    {recentProjects.length === 0 ? (
+                      <span className="block px-2.5 py-1.5 text-[12px] text-neutral-600">No recordings yet</span>
+                    ) : (
+                      recentProjects.map((p) => (
+                        <DropdownMenu.Item key={p.path} className="folder-item" onSelect={() => onOpenProject(p.path)}>
+                          {p.name}
+                        </DropdownMenu.Item>
+                      ))
+                    )}
+                  </DropdownMenu.SubContent>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Sub>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
         <button
           type="button"
           onClick={onDelete}

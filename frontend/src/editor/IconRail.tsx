@@ -3,7 +3,7 @@ import { Command, Frame, MessageSquare, MousePointer2, Share2, SquareUser, Volum
 const WIRED_TOOLS = new Set<ToolId>(["style", "cursor"]);
 
 export const TOOLS = [
-  { id: "style", icon: Frame, label: "Style" },
+  { id: "style", icon: Frame, label: "Background & Screen" },
   { id: "cursor", icon: MousePointer2, label: "Cursor" },
   { id: "webcam", icon: SquareUser, label: "Webcam" },
   { id: "comment", icon: MessageSquare, label: "Comments" },
