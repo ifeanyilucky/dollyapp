@@ -128,14 +128,6 @@ export function WindowPickerView() {
       }
     : null;
 
-  let label: { left: number; top: number; width: number } | null = null;
-  if (rect) {
-    const width = Math.min(Math.max(rect.width, 280), 420);
-    const left = Math.max(8, Math.min(rect.left + (rect.width - width) / 2, window.innerWidth - width - 8));
-    const top = Math.max(8, rect.top - 52);
-    label = { left, top, width };
-  }
-
   return (
     <div className="fixed inset-0 cursor-crosshair select-none" onMouseMove={onMouseMove}>
       {/* Dim the whole screen underneath the highlight. */}
@@ -161,46 +153,42 @@ export function WindowPickerView() {
         </>
       )}
 
-      {!rect && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+      {/* Window label + Start recording — centered on the screen, both
+          vertically and horizontally. */}
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-4">
+        {info ? (
+          <div className="pointer-events-none flex flex-col items-center gap-4">
+            <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-neutral-900/90 px-4 py-2.5 shadow-2xl backdrop-blur">
+              <div className="text-center">
+                <p className="truncate text-[14px] font-semibold leading-tight text-white">
+                  {info.ownerName || info.title || "Window"}
+                </p>
+                <p className="truncate text-[11px] leading-tight text-neutral-400">
+                  {info.title && `${info.title} · `}
+                  {Math.round(info.width)} × {Math.round(info.height)}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void startRecording()}
+              className="pointer-events-auto flex items-center gap-2.5 rounded-full bg-red-600 px-6 py-3 text-[15px] font-semibold text-white shadow-2xl ring-4 ring-red-600/30 transition-all hover:bg-red-500 hover:ring-red-500/30 disabled:opacity-50"
+            >
+              {busy ? (
+                <LoaderCircle className="h-4.5 w-4.5 animate-spin" />
+              ) : (
+                <Circle className="h-4.5 w-4.5" fill="currentColor" />
+              )}
+              {busy ? "Starting…" : "Start recording"}
+            </button>
+          </div>
+        ) : (
           <div className="rounded-lg bg-black/70 px-4 py-2 text-[13px] text-neutral-200 shadow-xl backdrop-blur">
             Move your cursor over a window to record it
           </div>
-        </div>
-      )}
-
-      {label && info && (
-        <div
-          className="absolute flex items-center gap-3 rounded-xl border border-white/10 bg-neutral-900/90 px-3 py-2 shadow-2xl backdrop-blur"
-          style={{ left: label.left, top: label.top, width: label.width }}
-        >
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-semibold leading-tight text-white">
-              {info.ownerName || info.title || "Window"}
-            </p>
-            <p className="truncate text-[11px] leading-tight text-neutral-400">
-              {info.title && `${info.title} · `}
-              {Math.round(info.width)} × {Math.round(info.height)}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Start recording — centered at the bottom of the screen, enabled
-          only while a window is highlighted. */}
-      <button
-        type="button"
-        disabled={busy || !info}
-        onClick={() => void startRecording()}
-        className="absolute bottom-10 left-1/2 flex -translate-x-1/2 items-center gap-2.5 rounded-full bg-red-600 px-6 py-3 text-[15px] font-semibold text-white shadow-2xl ring-4 ring-red-600/30 transition-all hover:bg-red-500 hover:ring-red-500/30 disabled:pointer-events-none disabled:opacity-40"
-      >
-        {busy ? (
-          <LoaderCircle className="h-4.5 w-4.5 animate-spin" />
-        ) : (
-          <Circle className="h-4.5 w-4.5" fill="currentColor" />
         )}
-        {busy ? "Starting…" : "Start recording"}
-      </button>
+      </div>
 
       {error && (
         <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-lg bg-red-950/90 px-3 py-2 text-[12px] text-red-200 shadow-xl">
