@@ -16,7 +16,9 @@ mod tray;
 pub fn run() {
     // stderr, not stdout: stdout is block-buffered when the app's output
     // is piped (as under `tauri dev`), which would swallow runtime logs.
-    tracing_subscriber::fmt().with_writer(std::io::stderr).init();
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .init();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())

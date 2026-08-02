@@ -49,9 +49,7 @@ pub fn open_window_picker(app: AppHandle) -> Result<(), String> {
     WebviewWindowBuilder::new(
         &app,
         WINDOW_PICKER_LABEL,
-        WebviewUrl::App(
-            format!("index.html?mode=window-pick&ox={x}&oy={y}").into(),
-        ),
+        WebviewUrl::App(format!("index.html?mode=window-pick&ox={x}&oy={y}").into()),
     )
     .title("Select a window")
     .position(x, y)

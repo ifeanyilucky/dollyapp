@@ -119,55 +119,51 @@ impl FrameGrabber {
     ) -> Result<()> {
         self.capturer.start_capture();
 
-        let result = (|| -> Result<()> {
-            // Poll with a bounded wait instead of blocking forever inside
-            // scap's channel (its `get_next_frame` is unbounded). A
-            // stalled or failed ScreenCaptureKit stream would otherwise
-            // leave this thread parked forever: the recording never
-            // finalizes and `recorder::stop`'s thread join hangs with it.
-            let mut last_frame_at = Instant::now();
-            while keep_going() {
-                match self.capturer.recv_timeout(POLL_INTERVAL) {
-                    Ok(frame) => {
-                        last_frame_at = Instant::now();
+        // Poll with a bounded wait instead of blocking forever inside
+        // scap's channel (its `get_next_frame` is unbounded). A stalled or
+        // failed ScreenCaptureKit stream would otherwise leave this thread
+        // parked forever: the recording never finalizes and
+        // `recorder::stop`'s thread join hangs with it.
+        let mut last_frame_at = Instant::now();
+        while keep_going() {
+            match self.capturer.recv_timeout(POLL_INTERVAL) {
+                Ok(frame) => {
+                    last_frame_at = Instant::now();
 
-                        let Frame::BGRA(bgra_frame) = frame else {
-                            continue;
-                        };
+                    let Frame::BGRA(bgra_frame) = frame else {
+                        continue;
+                    };
 
-                        on_frame(CapturedFrame {
-                            // Stamped on receipt, not from `display_time`, per the
-                            // shared-clock rule above.
-                            t: self.clock.now_us(),
-                            width: bgra_frame.width as u32,
-                            height: bgra_frame.height as u32,
-                            bgra: bgra_frame.data,
-                        });
-                    }
-                    // A live stream keeps emitting idle frames even on a
-                    // static screen, so only silence past the watchdog
-                    // means the stream is actually gone — end capture so
-                    // the caller can finalize what was recorded.
-                    Err(RecvError::Timeout) if last_frame_at.elapsed() > STREAM_STALLED_AFTER => {
-                        tracing::warn!("screen capture stream stalled; ending capture");
-                        break;
-                    }
-                    Err(RecvError::Timeout) => {}
-                    Err(RecvError::Disconnected) => {
-                        tracing::warn!("screen capture stream ended; ending capture");
-                        break;
-                    }
-                    Err(RecvError::StreamError) => {
-                        tracing::warn!("screen capture stream failed; ending capture");
-                        break;
-                    }
+                    on_frame(CapturedFrame {
+                        // Stamped on receipt, not from `display_time`, per the
+                        // shared-clock rule above.
+                        t: self.clock.now_us(),
+                        width: bgra_frame.width as u32,
+                        height: bgra_frame.height as u32,
+                        bgra: bgra_frame.data,
+                    });
+                }
+                // A live stream keeps emitting idle frames even on a
+                // static screen, so only silence past the watchdog
+                // means the stream is actually gone — end capture so
+                // the caller can finalize what was recorded.
+                Err(RecvError::Timeout) if last_frame_at.elapsed() > STREAM_STALLED_AFTER => {
+                    tracing::warn!("screen capture stream stalled; ending capture");
+                    break;
+                }
+                Err(RecvError::Timeout) => {}
+                Err(RecvError::Disconnected) => {
+                    tracing::warn!("screen capture stream ended; ending capture");
+                    break;
+                }
+                Err(RecvError::StreamError) => {
+                    tracing::warn!("screen capture stream failed; ending capture");
+                    break;
                 }
             }
-            Ok(())
-        })();
-
+        }
         self.capturer.stop_capture();
-        result
+        Ok(())
     }
 }
 

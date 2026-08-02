@@ -356,7 +356,11 @@ unsafe fn dict_number(dict: CfDictionaryRef, key: CfStringRef) -> Option<i32> {
         return None;
     }
     let mut number: i32 = 0;
-    let ok = CFNumberGetValue(value, K_CF_NUMBER_SINT32, &mut number as *mut i32 as *mut c_void);
+    let ok = CFNumberGetValue(
+        value,
+        K_CF_NUMBER_SINT32,
+        &mut number as *mut i32 as *mut c_void,
+    );
     if ok != 0 {
         Some(number)
     } else {
