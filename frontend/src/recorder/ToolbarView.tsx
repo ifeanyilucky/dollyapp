@@ -33,6 +33,18 @@ export function ToolbarView() {
     useRecordingState();
   const pillRef = useRef<HTMLDivElement>(null);
 
+  // A transparent Tauri window still sits on an opaque `<html>/<body>`
+  // canvas by default — clear it explicitly, like `AreaSelectorView` and
+  // `WindowPickerView`. Without this the WKWebView's default background
+  // shows through as a faded box the size of the whole (much bigger than
+  // the pill) window, most visible once the pill shrinks to the compact
+  // `RecordingControls` during recording — and gets captured in the
+  // recording itself.
+  useEffect(() => {
+    document.documentElement.style.background = "transparent";
+    document.body.style.background = "transparent";
+  }, []);
+
   // Custom "drag from anywhere" instead of Tauri's `data-tauri-drag-region`
   // (which is what the old comment below described): the built-in handler
   // won't start a drag from any clickable element (button/link/...) and it
