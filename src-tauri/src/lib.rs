@@ -59,8 +59,7 @@ pub fn run() {
             // yet, so fall back to the regular window for the first-run
             // permission flow; the frontend calls `enter_toolbar_mode`
             // once that flow finishes (see `PermissionsGate`'s `onGranted`).
-            if permissions::screen_recording_status() == permissions::PermissionStatus::Authorized
-            {
+            if permissions::screen_recording_status() == permissions::PermissionStatus::Authorized {
                 toolbar::show(app.handle())?;
             } else if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();

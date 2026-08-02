@@ -18,8 +18,8 @@ use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use crate::capture;
 
 const LABEL: &str = "toolbar";
-const WIDTH: f64 = 640.0;
-const HEIGHT: f64 = 96.0;
+const WIDTH: f64 = 900.0;
+const HEIGHT: f64 = 100.0;
 /// Gap between the toolbar's top edge and the display's own top edge —
 /// clears the menu bar/notch while still reading as "docked to the top",
 /// matching Screen Studio's own recording bar placement.
@@ -37,20 +37,24 @@ pub fn show(app: &AppHandle) -> tauri::Result<()> {
     let x = display_x + (display_width - WIDTH) / 2.0;
     let y = display_y + TOP_MARGIN;
 
-    WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html?mode=toolbar".into()))
-        .title("Dolly")
-        .position(x, y)
-        .inner_size(WIDTH, HEIGHT)
-        .decorations(false)
-        .transparent(true)
-        .always_on_top(true)
-        .visible_on_all_workspaces(true)
-        .skip_taskbar(true)
-        .resizable(false)
-        .shadow(true)
-        .focused(true)
-        .visible(true)
-        .build()?;
+    WebviewWindowBuilder::new(
+        app,
+        LABEL,
+        WebviewUrl::App("index.html?mode=toolbar".into()),
+    )
+    .title("Dolly")
+    .position(x, y)
+    .inner_size(WIDTH, HEIGHT)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .visible_on_all_workspaces(true)
+    .skip_taskbar(true)
+    .resizable(false)
+    .shadow(true)
+    .focused(true)
+    .visible(true)
+    .build()?;
 
     Ok(())
 }
