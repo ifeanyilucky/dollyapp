@@ -1,6 +1,7 @@
 import type { CursorEvent, CursorSample, CursorTrack } from "../bundle/types";
 import { createMotionEngine, smoothCursorTrack, type FrameSize, type MotionEngine } from "../motion-engine";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
+import { paintCanvasGradient, WALLPAPER_PRESETS } from "./wallpapers";
 
 const CLICK_PULSE_DURATION_US = 220_000;
 const CLICK_RIPPLE_DURATION_US = 500_000;
@@ -49,6 +50,11 @@ export class SceneRenderer {
   // canvas and just blitted (cheap) after that.
   private shadowLayer: HTMLCanvasElement | null = null;
   private shadowLayerKey = "";
+  // Same caching story as the shadow layer — a gradient fill plus a CSS
+  // blur filter pass is not something to redo 60 times a second.
+  private backgroundLayer: HTMLCanvasElement | null = null;
+  private backgroundLayerKey = "";
+  private backgroundBlurSource: HTMLCanvasElement | null = null;
 
   constructor(opts: SceneRendererOptions) {
     this.scaleFactor = opts.scaleFactor;
@@ -72,11 +78,11 @@ export class SceneRenderer {
     video: HTMLVideoElement,
     tUs: number,
     style: StyleSettings = DEFAULT_STYLE,
+    showCursor = true,
   ): void {
     const canvas = ctx.canvas;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = style.backgroundColor;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(this.getBackgroundLayer(canvas.width, canvas.height, style), 0, 0);
 
     const content = this.contentRect(canvas.width, canvas.height, style.padding);
 
@@ -121,7 +127,9 @@ export class SceneRenderer {
       ctx.restore();
     }
 
-    if (!cursor) return;
+    // `cursor` still drives pan above even when the glyph itself is
+    // hidden — this flag is purely visual, not a "stop tracking" switch.
+    if (!cursor || !showCursor) return;
 
     const cx = content.x + ((cursor.x - viewport.x) / viewport.width) * content.width;
     const cy = content.y + ((cursor.y - viewport.y) / viewport.height) * content.height;
@@ -145,6 +153,66 @@ export class SceneRenderer {
     }
 
     return { x: (canvasWidth - width) / 2, y: (canvasHeight - height) / 2, width, height };
+  }
+
+  private paintBackgroundFill(
+    ctx: CanvasRenderingContext2D,
+    style: StyleSettings,
+    width: number,
+    height: number,
+  ): void {
+    if (style.backgroundType === "color") {
+      ctx.fillStyle = style.backgroundColor;
+    } else {
+      // "gradient" and "wallpaper" both read from the same preset list
+      // for now — a from-scratch gradient builder and real image
+      // wallpapers are follow-ups, not different data underneath.
+      const preset =
+        WALLPAPER_PRESETS.find((p) => p.id === style.wallpaperId) ?? WALLPAPER_PRESETS[0];
+      ctx.fillStyle = paintCanvasGradient(ctx, preset, width, height);
+    }
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  private getBackgroundLayer(canvasWidth: number, canvasHeight: number, style: StyleSettings): HTMLCanvasElement {
+    const key = [
+      canvasWidth,
+      canvasHeight,
+      style.backgroundType,
+      style.backgroundType === "color" ? style.backgroundColor : style.wallpaperId,
+      style.backgroundBlur,
+    ].join(":");
+
+    if (this.backgroundLayer && this.backgroundLayerKey === key) return this.backgroundLayer;
+
+    const layer = this.backgroundLayer ?? document.createElement("canvas");
+    layer.width = canvasWidth;
+    layer.height = canvasHeight;
+    const lctx = layer.getContext("2d");
+    if (lctx) {
+      lctx.clearRect(0, 0, canvasWidth, canvasHeight);
+      if (style.backgroundBlur > 0) {
+        // `ctx.filter` only applies to subsequent draws, not retroactively
+        // — paint the unblurred fill into a scratch canvas first, then
+        // composite it back through a filtered drawImage.
+        const source = this.backgroundBlurSource ?? document.createElement("canvas");
+        source.width = canvasWidth;
+        source.height = canvasHeight;
+        const sctx = source.getContext("2d");
+        if (sctx) this.paintBackgroundFill(sctx, style, canvasWidth, canvasHeight);
+        this.backgroundBlurSource = source;
+
+        lctx.filter = `blur(${style.backgroundBlur}px)`;
+        lctx.drawImage(source, 0, 0);
+        lctx.filter = "none";
+      } else {
+        this.paintBackgroundFill(lctx, style, canvasWidth, canvasHeight);
+      }
+    }
+
+    this.backgroundLayer = layer;
+    this.backgroundLayerKey = key;
+    return layer;
   }
 
   private getShadowLayer(

@@ -17,3 +17,7 @@ export function loadRecording(bundlePath: string): Promise<LoadedRecording> {
 export function revealInFinder(bundlePath: string): Promise<void> {
   return invoke("reveal_in_finder", { bundlePath });
 }
+
+export function deleteRecording(bundlePath: string): Promise<void> {
+  return invoke("delete_recording", { bundlePath });
+}

@@ -1,14 +1,23 @@
+import { WALLPAPER_PRESETS } from "./wallpapers";
+
 /**
  * Style panel state — background, spacing, corner radius, and shadow
  * around the video (PRD's "Backgrounds" feature, brought forward from M5
  * since it's one rendering pass on top of the preview canvas that already
- * exists). Background is solid-color only for now; gradient/image/
- * wallpaper backgrounds are a follow-up on top of this same struct.
+ * exists).
  */
+export type BackgroundType = "wallpaper" | "gradient" | "color" | "image";
+
 export interface StyleSettings {
+  backgroundType: BackgroundType;
+  /** Wallpaper preset id (see wallpapers.ts) — used when backgroundType
+   * is "wallpaper" or "gradient" (gradient reuses the same preset list
+   * for now; a custom gradient builder is a follow-up). */
+  wallpaperId: string;
+  backgroundColor: string;
+  backgroundBlur: number;
   /** Canvas px between the frame edge and the video content. */
   padding: number;
-  backgroundColor: string;
   /** Corner radius of the video content itself, canvas px. */
   cornerRadius: number;
   shadowBlur: number;
@@ -22,8 +31,11 @@ export interface StyleSettings {
 }
 
 export const DEFAULT_STYLE: StyleSettings = {
-  padding: 64,
+  backgroundType: "wallpaper",
+  wallpaperId: WALLPAPER_PRESETS[0].id,
   backgroundColor: "#1e1b2e",
+  backgroundBlur: 0,
+  padding: 64,
   cornerRadius: 18,
   shadowBlur: 50,
   shadowOffsetY: 24,
