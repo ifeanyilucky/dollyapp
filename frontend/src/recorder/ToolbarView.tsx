@@ -99,7 +99,7 @@ export function ToolbarView() {
     // controls stay clickable.
     <div
       data-tauri-drag-region="deep"
-      className="flex h-screen w-screen justify-center bg-transparent pt-2"
+      className="flex h-screen w-screen items-start justify-center bg-transparent pt-2"
     >
       <div ref={pillRef} className="flex flex-col items-center gap-1.5">
         {isRecording ? (
