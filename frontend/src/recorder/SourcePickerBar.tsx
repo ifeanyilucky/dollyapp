@@ -9,6 +9,7 @@ import {
   MicOff,
   Monitor,
   MonitorSpeaker,
+  RotateCcw,
   Settings,
   Smartphone,
   Video,
@@ -156,7 +157,7 @@ export function SourcePickerBar({
           aria-label="Reset source selection"
           title="Reset"
         >
-          <X className="h-4 w-4" />
+          <RotateCcw className="h-4 w-4" />
         </button>
 
         <div className="mx-1 h-8 w-px bg-neutral-800" />
