@@ -28,6 +28,11 @@ struct ActiveRecording {
     is_paused: bool,
     capture_stop: Arc<AtomicBool>,
     capture_thread: Option<JoinHandle<Result<CaptureOutcome>>>,
+    /// `None` if mic recording wasn't enabled for this recording.
+    /// `MicRecorder` is plain `Send` data (its `AVAudioEngine` lives
+    /// entirely inside its own dedicated thread, never touching this
+    /// struct) — see `audio::macos`'s doc comment.
+    mic: Option<MicRecorder>,
 }
 
 struct CaptureOutcome {
@@ -46,6 +51,9 @@ struct CaptureOutcome {
 pub struct RecorderState {
     active: Mutex<Option<ActiveRecording>>,
     selected_target: Mutex<Option<scap::Target>>,
+    /// Opt-in, read at the next `start()` — never enabled implicitly, per
+    /// the lazy-permission-request rule (ARCHITECTURE.md, "Permissions").
+    mic_enabled: Mutex<bool>,
 }
 
 pub fn is_recording(state: &RecorderState) -> bool {
@@ -55,6 +63,14 @@ pub fn is_recording(state: &RecorderState) -> bool {
 /// `None` clears the selection, falling back to the main display.
 pub fn set_selected_target(state: &RecorderState, target: Option<scap::Target>) {
     *state.selected_target.lock().unwrap() = target;
+}
+
+/// The frontend is expected to have already requested (and confirmed)
+/// microphone permission via `request_microphone_permission` before
+/// calling this with `true` — this just records the user's toggle, it
+/// doesn't check or request permission itself.
+pub fn set_mic_enabled(state: &RecorderState, enabled: bool) {
+    *state.mic_enabled.lock().unwrap() = enabled;
 }
 
 pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
@@ -89,6 +105,20 @@ pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
             .context("failed to spawn capture thread")?
     };
 
+    let mic = if *state.mic_enabled.lock().unwrap() {
+        match MicRecorder::start(bundle_dir.join(names::MIC_AUDIO)) {
+            Ok(mic) => Some(mic),
+            Err(e) => {
+                // Mic failing to start shouldn't take down the whole
+                // recording — screen + cursor are the parts that matter.
+                tracing::error!("failed to start mic capture: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     *guard = Some(ActiveRecording {
         bundle_dir,
         clock,
@@ -96,6 +126,7 @@ pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
         is_paused: false,
         capture_stop,
         capture_thread: Some(capture_thread),
+        mic,
     });
     drop(guard);
 
@@ -125,6 +156,20 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
         .join()
         .map_err(|_| anyhow!("capture thread panicked"))??;
 
+    // Mic errors don't fail the whole `stop()` — screen + cursor are
+    // already safely on disk by this point, and losing just the audio
+    // track is a much smaller problem than losing the recording.
+    let has_mic_audio = match active.mic {
+        Some(mic) => match mic.stop() {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::error!("failed to finalize mic recording: {e}");
+                false
+            }
+        },
+        None => false,
+    };
+
     let cursor_track = cursor::stop_on_main_thread(app).await?;
 
     let writer = BundleWriter::create(&active.bundle_dir)?;
@@ -140,7 +185,7 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
         duration_us: active.clock.now_us(),
         has_webcam: false,
         has_system_audio: false,
-        has_mic_audio: false,
+        has_mic_audio,
         fps: FPS,
     })?;
     std::fs::write(

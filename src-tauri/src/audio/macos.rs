@@ -25,7 +25,10 @@ impl MicRecorder {
             .name("dolly-mic".into())
             .spawn(move || run(wav_path, stop_rx))
             .context("failed to spawn mic capture thread")?;
-        Ok(Self { stop_tx, thread: Some(thread) })
+        Ok(Self {
+            stop_tx,
+            thread: Some(thread),
+        })
     }
 
     pub fn stop(mut self) -> Result<()> {
@@ -60,8 +63,9 @@ fn run(wav_path: PathBuf, stop_rx: mpsc::Receiver<()>) -> Result<()> {
         bits_per_sample: 32,
         sample_format: hound::SampleFormat::Float,
     };
-    let writer =
-        Arc::new(Mutex::new(hound::WavWriter::create(&wav_path, spec).context("creating mic.wav")?));
+    let writer = Arc::new(Mutex::new(
+        hound::WavWriter::create(&wav_path, spec).context("creating mic.wav")?,
+    ));
 
     let tap_writer = Arc::clone(&writer);
     let channel_count = channels as usize;
@@ -75,7 +79,9 @@ fn run(wav_path: PathBuf, stop_rx: mpsc::Receiver<()>) -> Result<()> {
             if channel_data.is_null() || frame_length == 0 {
                 return;
             }
-            let Ok(mut writer) = tap_writer.lock() else { return };
+            let Ok(mut writer) = tap_writer.lock() else {
+                return;
+            };
             for frame in 0..frame_length {
                 for ch in 0..channel_count {
                     let channel_ptr = unsafe { *channel_data.add(ch) };
@@ -93,7 +99,9 @@ fn run(wav_path: PathBuf, stop_rx: mpsc::Receiver<()>) -> Result<()> {
             Some(&format),
             block2_avf::RcBlock::as_ptr(&tap_block),
         );
-        engine.startAndReturnError().map_err(|e| anyhow!("failed to start AVAudioEngine: {e:?}"))?;
+        engine
+            .startAndReturnError()
+            .map_err(|e| anyhow!("failed to start AVAudioEngine: {e:?}"))?;
     }
 
     // Blocks this thread until `stop()` sends — the tap block above runs

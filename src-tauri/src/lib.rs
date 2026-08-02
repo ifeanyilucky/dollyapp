@@ -34,6 +34,7 @@ pub fn run() {
             commands::stop_recording,
             commands::pause_recording,
             commands::resume_recording,
+            commands::set_mic_enabled,
         ])
         .manage(recorder::RecorderState::default())
         .setup(|app| {

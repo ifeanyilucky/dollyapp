@@ -34,3 +34,11 @@ pub fn pause_recording(app: AppHandle, state: State<'_, RecorderState>) -> Resul
 pub fn resume_recording(app: AppHandle, state: State<'_, RecorderState>) -> Result<(), String> {
     recorder::resume(&app, &state).map_err(|e| e.to_string())
 }
+
+/// The frontend must have already confirmed microphone permission via
+/// `request_microphone_permission` before calling this with `true` —
+/// enabling here doesn't itself trigger the OS prompt.
+#[tauri::command]
+pub fn set_mic_enabled(state: State<'_, RecorderState>, enabled: bool) {
+    recorder::set_mic_enabled(&state, enabled);
+}

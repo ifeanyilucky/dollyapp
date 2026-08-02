@@ -10,7 +10,9 @@
 mod macos;
 
 #[cfg(target_os = "macos")]
-pub use macos::{is_recording, pause, resume, set_selected_target, start, stop, RecorderState};
+pub use macos::{
+    is_recording, pause, resume, set_mic_enabled, set_selected_target, start, stop, RecorderState,
+};
 
 /// Tauri event name, payload `bool` (true = now recording). Emitted by
 /// `start`/`stop` so the frontend stays in sync when recording is toggled
