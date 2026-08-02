@@ -1,5 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { confirm } from "@tauri-apps/plugin-dialog";
+import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { generateZoomKeyframes, splitKeyframeAt, type ZoomKeyframe } from "../motion-engine";
 import { aspectRatioPreset, type AspectRatioId } from "./aspect";
@@ -7,6 +7,7 @@ import { deleteRecording, loadRecording, revealInFinder, type LoadedRecording } 
 import { playClickSound } from "./clickSound";
 import { CursorPanel } from "./CursorPanel";
 import { DEFAULT_CURSOR_SETTINGS, type CursorSettings } from "./cursorSettings";
+import { exportVideo } from "./exportVideo";
 import { IconRail, type ToolId } from "./IconRail";
 import { SceneRenderer, shiftCursorTrack } from "./renderer";
 import { initialSlices, resizeSlices, sliceAt, splitSliceAt, type ClipSlice } from "./slices";
@@ -24,13 +25,13 @@ const FALLBACK_PREVIEW_HEIGHT = 560;
 
 /**
  * Post-recording preview: plays `screen.mov` through the same motion
- * engine export will eventually use (ARCHITECTURE.md, "preview and export
- * must never diverge"), with auto-generated zoom/pan that follows the live
- * cursor, an animated cursor overlay, background/padding/shadow styling,
- * an output aspect ratio switch, and split-based clip slices (speed +
- * per-slice cursor override). No true export (motion baked into an output
- * file) yet — slices/zoom edits, like everything else here, only affect
- * preview playback.
+ * engine export uses (ARCHITECTURE.md, "preview and export must never
+ * diverge"), with auto-generated zoom/pan that follows the live cursor,
+ * an animated cursor overlay, background/padding/shadow styling, an output
+ * aspect ratio switch, and split-based clip slices (speed + per-slice
+ * cursor override). "Export" renders the whole clip with every applied
+ * setting baked in (zoom keyframes, trim, slices, styling, cursor overlay,
+ * aspect) to wherever the user picks in a save dialog.
  */
 export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClose: () => void }) {
   const [loaded, setLoaded] = useState<LoadedRecording | null>(null);
@@ -55,6 +56,8 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   const [selectedZoomIndex, setSelectedZoomIndex] = useState<number | null>(null);
   const [activeTool, setActiveTool] = useState<ToolId>("style");
   const [cursorSettings, setCursorSettings] = useState<CursorSettings>(DEFAULT_CURSOR_SETTINGS);
+  const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -327,6 +330,36 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
     onClose();
   }
 
+  /** Renders the movie with every applied setting baked in — the user picks
+   * the destination in a save dialog (see `exportVideo`). */
+  async function handleExport() {
+    if (!loaded || exporting) return;
+    setExporting(true);
+    setExportProgress(0);
+    try {
+      const dest = await exportVideo({
+        loaded,
+        zoomKeyframes,
+        clipStartS,
+        clipEndS,
+        slices,
+        style,
+        showCursor,
+        cursorSettings,
+        aspectRatioId,
+        onProgress: (done, total) => setExportProgress(total > 0 ? done / total : 0),
+      });
+      if (dest) {
+        await message(`Saved to:\n${dest}`, { title: "Export complete", kind: "info" });
+      }
+    } catch (e: unknown) {
+      await message(String(e), { title: "Export failed", kind: "error" });
+    } finally {
+      setExporting(false);
+      setExportProgress(0);
+    }
+  }
+
   function handleSplitClip(atS: number) {
     setSlices((prev) => splitSliceAt(prev, atS));
   }
@@ -429,6 +462,9 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
         onToggleCursor={() => setShowCursor((v) => !v)}
         playbackRate={playbackRate}
         onCyclePlaybackRate={cyclePlaybackRate}
+        onExport={() => void handleExport()}
+        exporting={exporting}
+        exportProgress={exportProgress}
         onRevealInFinder={() => void revealInFinder(bundlePath)}
         onDelete={() => void handleDelete()}
         onClose={onClose}

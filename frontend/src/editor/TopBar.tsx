@@ -7,6 +7,7 @@ import {
   EyeOff,
   Folder,
   Gauge,
+  Loader,
   Redo2,
   Shapes,
   Sparkles,
@@ -19,13 +20,13 @@ import { ASPECT_RATIO_PRESETS, type AspectRatioId } from "./aspect";
 const SPEED_STEPS = [1, 1.5, 2, 0.5];
 
 /**
- * Top toolbar. Real actions: reveal-in-Finder, delete (confirms first),
- * cursor-overlay toggle, playback-speed cycling, output aspect ratio
- * (PRD §9, "Horizontal and vertical output"). Undo/redo and Presets are
- * inert — there's no edit-history system or preset library yet. "Export"
- * currently reveals the bundle in Finder rather than rendering an output
- * file — a true export (motion/style baked in) isn't built. Crop / Mask
- * are separate, larger features not covered here.
+ * Top toolbar. Real actions: export (renders the movie with every applied
+ * setting baked in — zoom keyframes, clip trim, slices, styling, cursor
+ * overlay, aspect ratio — via a save dialog), reveal-in-Finder, delete
+ * (confirms first), cursor-overlay toggle, playback-speed cycling, output
+ * aspect ratio (PRD §9, "Horizontal and vertical output"). Undo/redo and
+ * Presets are inert — there's no edit-history system or preset library yet.
+ * Crop / Mask are separate, larger features not covered here.
  */
 export function TopBar({
   title,
@@ -35,6 +36,9 @@ export function TopBar({
   onToggleCursor,
   playbackRate,
   onCyclePlaybackRate,
+  onExport,
+  exporting,
+  exportProgress,
   onRevealInFinder,
   onDelete,
   onClose,
@@ -46,6 +50,10 @@ export function TopBar({
   onToggleCursor: () => void;
   playbackRate: number;
   onCyclePlaybackRate: () => void;
+  onExport: () => void;
+  exporting: boolean;
+  /** 0..1 while exporting, for the button label — omit/undefined when idle. */
+  exportProgress?: number;
   onRevealInFinder: () => void;
   onDelete: () => void;
   onClose: () => void;
@@ -136,12 +144,13 @@ export function TopBar({
 
         <button
           type="button"
-          onClick={onRevealInFinder}
-          className="ml-1 flex items-center gap-1.5 rounded-md bg-indigo-500 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-indigo-400"
-          title="Reveals the recording in Finder — full rendered export isn't built yet"
+          onClick={onExport}
+          disabled={exporting}
+          className="ml-1 flex items-center gap-1.5 rounded-md bg-indigo-500 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
+          title="Export the rendered video (asks where to save)"
         >
-          <Upload className="h-3.5 w-3.5" />
-          Export
+          {exporting ? <Loader className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+          {exporting ? `Exporting ${Math.round((exportProgress ?? 0) * 100)}%` : "Export"}
         </button>
       </div>
 
