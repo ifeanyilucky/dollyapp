@@ -21,8 +21,6 @@ yarn-error.log*
 .LSOverride
 
 # Editors
-.vscode/*
-!.vscode/extensions.json
 .idea/
 
 # Env / secrets
@@ -46,3 +44,7 @@ build/
 
 docs/
 .claude/
+
+
+
+.gitignore
