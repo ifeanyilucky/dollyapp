@@ -4,7 +4,9 @@ import { MotionEngine } from "./index";
 
 const FRAME = { width: 1920, height: 1080 };
 
-function kf(overrides: Pick<ZoomKeyframe, "startT" | "endT" | "level" | "center">): ZoomKeyframe {
+function kf(
+  overrides: Pick<ZoomKeyframe, "startT" | "endT" | "level" | "center"> & Partial<ZoomKeyframe>,
+): ZoomKeyframe {
   return { ...DEFAULT_ZOOM_KEYFRAME_EXTRAS, ...overrides };
 }
 

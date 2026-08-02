@@ -132,6 +132,7 @@ export class SceneRenderer {
     // doc comment for why there must only ever be one array of these.
     this.motionEngine = new MotionEngine(opts.frame, opts.zoomKeyframes, opts.outputAspect);
     this.smoothedSamples = smoothCursorTrack(cursorTrack.samples);
+    this.rawSamples = cursorTrack.samples;
     this.events = cursorTrack.events;
   }
 
@@ -158,7 +159,10 @@ export class SceneRenderer {
    * `RecordingMeta.videoStartUs` for how to derive this from a `<video>`
    * element's `currentTime`. `clipEndTUs`: same epoch, the clip's current
    * out-point (respects a timeline trim, not just the source recording's
-   * raw length) — used only for `cursorSettings.loopCursorPosition`. */
+   * raw length) — used only for `cursorSettings.loopCursorPosition`.
+   * `sliceCursorOverride`: the slice active at `tUs`'s own cursor override
+   * (see `slices.ts`), if any — layers on top of `cursorSettings` for just
+   * that slice's time range, rather than replacing it. */
   draw(
     ctx: CanvasRenderingContext2D,
     video: HTMLVideoElement,
@@ -167,6 +171,7 @@ export class SceneRenderer {
     showCursor = true,
     cursorSettings: CursorSettings = DEFAULT_CURSOR_SETTINGS,
     clipEndTUs = 0,
+    sliceCursorOverride: SliceCursorOverride | null = null,
   ): void {
     const canvas = ctx.canvas;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -174,7 +179,8 @@ export class SceneRenderer {
 
     const content = this.contentRect(canvas.width, canvas.height, style.padding);
 
-    const cursor = this.effectiveCursorPositionAt(tUs, clipEndTUs, cursorSettings.loopCursorPosition);
+    const useRaw = sliceCursorOverride?.disableSmoothMovement ?? false;
+    const cursor = this.effectiveCursorPositionAt(tUs, clipEndTUs, cursorSettings.loopCursorPosition, useRaw);
     // Live cursor position drives pan while a zoom is active (see
     // ARCHITECTURE.md, "Pan follows the live cursor") — computed before
     // `transformAt` so it can be passed straight in.
@@ -217,11 +223,11 @@ export class SceneRenderer {
 
     // `cursor` still drives pan above even when the glyph itself is
     // hidden — this flag is purely visual, not a "stop tracking" switch.
-    if (!cursor || !showCursor) return;
+    if (!cursor || !showCursor || sliceCursorOverride?.hideCursor) return;
     // Idle-hide checks the *raw* (non-loop-blended) position — a loop
     // blend nudging the cursor a fraction of a pixel per frame shouldn't
     // itself count as "moving".
-    if (cursorSettings.hideCursorIfNotMoving && this.isCursorIdleAt(tUs)) return;
+    if (cursorSettings.hideCursorIfNotMoving && this.isCursorIdleAt(tUs, useRaw)) return;
 
     const cx = content.x + ((cursor.x - viewport.x) / viewport.width) * content.width;
     const cy = content.y + ((cursor.y - viewport.y) / viewport.height) * content.height;
@@ -398,8 +404,8 @@ export class SceneRenderer {
     return layer;
   }
 
-  private cursorPositionAt(tUs: number): { x: number; y: number } | null {
-    const samples = this.smoothedSamples;
+  private cursorPositionAt(tUs: number, useRaw = false): { x: number; y: number } | null {
+    const samples = useRaw ? this.rawSamples : this.smoothedSamples;
     if (samples.length === 0) return null;
     if (tUs <= samples[0].t) return samples[0];
     const last = samples[samples.length - 1];
@@ -431,9 +437,10 @@ export class SceneRenderer {
     tUs: number,
     clipEndTUs: number,
     loopEnabled: boolean,
+    useRaw = false,
   ): { x: number; y: number } | null {
-    const raw = this.cursorPositionAt(tUs);
-    const first = this.smoothedSamples[0];
+    const raw = this.cursorPositionAt(tUs, useRaw);
+    const first = (useRaw ? this.rawSamples : this.smoothedSamples)[0];
     if (!raw || !first || !loopEnabled || clipEndTUs <= 0) return raw;
 
     const remaining = clipEndTUs - tUs;
@@ -469,10 +476,12 @@ export class SceneRenderer {
 
   /** Whether the cursor has moved less than a few pixels over the last
    * `IDLE_WINDOW_US` — drives `CursorSettings.hideCursorIfNotMoving`. Uses
-   * the *raw* (non-loop-blended) position; see `draw`'s call site. */
-  private isCursorIdleAt(tUs: number): boolean {
-    const now = this.cursorPositionAt(tUs);
-    const before = this.cursorPositionAt(Math.max(0, tUs - IDLE_WINDOW_US));
+   * the non-loop-blended position (still respects `useRaw`, so idle
+   * detection isn't skewed by smoothing while a slice disables it); see
+   * `draw`'s call site. */
+  private isCursorIdleAt(tUs: number, useRaw = false): boolean {
+    const now = this.cursorPositionAt(tUs, useRaw);
+    const before = this.cursorPositionAt(Math.max(0, tUs - IDLE_WINDOW_US), useRaw);
     if (!now || !before) return false;
     return Math.hypot(now.x - before.x, now.y - before.y) < IDLE_THRESHOLD_PX;
   }
