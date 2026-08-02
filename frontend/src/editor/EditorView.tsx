@@ -504,6 +504,17 @@ export function EditorView({
     setSelectedSliceId(null);
   }
 
+  /** `IconRail`'s `onSelect` — also clears any selected slice/zoom
+   * keyframe, or clicking a rail tool while `SliceEditorPanel`/
+   * `ZoomEditorPanel` is showing would silently no-op: the sidebar's
+   * ternary checks `selectedSlice`/`selectedZoomKeyframe` before
+   * `activeTool`, so without this the panel never actually swaps. */
+  function selectTool(id: ToolId) {
+    setSelectedSliceId(null);
+    setSelectedZoomIndex(null);
+    setActiveTool(id);
+  }
+
   function updateSlice(next: ClipSlice) {
     setDoc((d) => ({ ...d, slices: d.slices.map((s) => (s.id === next.id ? next : s)) }));
   }
@@ -659,7 +670,7 @@ export function EditorView({
         </div>
         {!previewMode && showSidebar && (
           <>
-            <IconRail active={selectedSlice || selectedZoomKeyframe ? null : activeTool} onSelect={setActiveTool} />
+            <IconRail active={selectedSlice || selectedZoomKeyframe ? null : activeTool} onSelect={selectTool} />
             {selectedSlice ? (
               <SliceEditorPanel
                 slice={selectedSlice}
