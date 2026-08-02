@@ -28,9 +28,10 @@ const SPEED_STEPS = [1, 1.5, 2, 0.5];
  * setting baked in — zoom keyframes, clip trim, slices, styling, cursor
  * overlay, aspect ratio — via a save dialog), reveal-in-Finder, delete
  * (confirms first), cursor-overlay toggle, playback-speed cycling, output
- * aspect ratio (PRD §9, "Horizontal and vertical output"). Undo/redo and
- * Presets are inert — there's no edit-history system or preset library yet.
- * Crop / Mask are separate, larger features not covered here.
+ * aspect ratio (PRD §9, "Horizontal and vertical output"), and undo/redo
+ * (also ⌘Z/⇧⌘Z — see `EditorView`'s history, `history.ts`). Presets is
+ * inert — there's no preset library yet. Crop / Mask are separate, larger
+ * features not covered here.
  */
 export function TopBar({
   title,
@@ -43,6 +44,10 @@ export function TopBar({
   onExport,
   exporting,
   exportProgress,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
   onRevealInFinder,
   onOpenProject,
   onDelete,
@@ -59,6 +64,10 @@ export function TopBar({
   exporting: boolean;
   /** 0..1 while exporting, for the button label — omit/undefined when idle. */
   exportProgress?: number;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
   onRevealInFinder: () => void;
   /** Switches the editor to a different past recording (from the folder
    * dropdown's "Show previous projects" submenu) — a no-op if it's already
@@ -148,19 +157,21 @@ export function TopBar({
 
         <button
           type="button"
-          disabled
-          className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-700"
-          aria-label="Undo (not available yet)"
-          title="Undo — not available yet"
+          onClick={onUndo}
+          disabled={!canUndo}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200 disabled:cursor-not-allowed disabled:text-neutral-700 disabled:hover:bg-transparent"
+          aria-label="Undo"
+          title="Undo (⌘Z)"
         >
           <Undo2 className="h-4 w-4" />
         </button>
         <button
           type="button"
-          disabled
-          className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-700"
-          aria-label="Redo (not available yet)"
-          title="Redo — not available yet"
+          onClick={onRedo}
+          disabled={!canRedo}
+          className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200 disabled:cursor-not-allowed disabled:text-neutral-700 disabled:hover:bg-transparent"
+          aria-label="Redo"
+          title="Redo (⇧⌘Z)"
         >
           <Redo2 className="h-4 w-4" />
         </button>

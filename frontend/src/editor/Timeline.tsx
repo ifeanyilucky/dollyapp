@@ -45,6 +45,7 @@ export function Timeline({
   isPlaying,
   onTogglePlay,
   onSeek,
+  onPreviewSeek,
   zoomKeyframes,
   videoStartUs,
   clipStartS,
@@ -63,6 +64,11 @@ export function Timeline({
   isPlaying: boolean;
   onTogglePlay: () => void;
   onSeek: (seconds: number) => void;
+  /** Live scrub-hover preview — called continuously while the mouse moves
+   * over the track (not a commit; pairs with `onSeek`, which fires only on
+   * an actual click) and with `null` when the mouse leaves the track,
+   * meaning "revert to showing the actual committed position." */
+  onPreviewSeek: (seconds: number | null) => void;
   /** Absolute `t` (microseconds since clockEpoch), same as `cursor.json` —
    * converted to video-relative seconds internally via `videoStartUs`. */
   zoomKeyframes: ZoomKeyframe[];
@@ -114,12 +120,16 @@ export function Timeline({
     const s = secondsAtClientX(e.clientX);
     setHoverS(s);
     // Live scrub preview — the canvas shows exactly the frame under the
-    // cursor, whether that's to line up a split or just to look around.
-    onSeek(s);
+    // cursor, whether that's to line up a split or just to look around —
+    // without moving the actual, committed playhead (that only happens on
+    // click, via `onSeek` in `handleTrackClick`/`handleSliceClick`).
+    onPreviewSeek(s);
   }
 
   function handleTrackMouseLeave() {
     setHoverS(null);
+    // Revert the preview back to showing the actual committed position.
+    onPreviewSeek(null);
   }
 
   /** Fires for clicks on the ruler or any empty gap between zoom
@@ -335,7 +345,7 @@ export function Timeline({
             return (
               <div
                 key={slice.id}
-                className={`group absolute top-0 flex h-full items-center justify-center overflow-hidden ${
+                className={`group absolute top-0 flex h-full items-center justify-center overflow-hidden shadow-md shadow-black/40 ${
                   isFirst ? "rounded-l-md" : ""
                 } ${isLast ? "rounded-r-md" : ""} ${
                   slice.removed
@@ -394,7 +404,7 @@ export function Timeline({
             return (
               <div
                 key={index}
-                className={`group absolute top-0 flex h-full items-center justify-center overflow-hidden rounded-md text-[10px] font-medium text-white ${
+                className={`group absolute top-0 flex h-full items-center justify-center overflow-hidden rounded-md text-[10px] font-medium text-white shadow-md shadow-black/40 ${
                   kf.disabled ? "bg-neutral-600/70" : "bg-indigo-500/80"
                 } ${
                   splitArmed

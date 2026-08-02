@@ -2,18 +2,18 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { generateZoomKeyframes, splitKeyframeAt, type ZoomKeyframe } from "../motion-engine";
-import { aspectRatioPreset, type AspectRatioId } from "./aspect";
+import { aspectRatioPreset } from "./aspect";
 import { deleteRecording, loadRecording, revealInFinder, type LoadedRecording } from "./api";
 import { playClickSound } from "./clickSound";
 import { CursorPanel } from "./CursorPanel";
-import { DEFAULT_CURSOR_SETTINGS, type CursorSettings } from "./cursorSettings";
+import { DEFAULT_DOCUMENT, type EditorDocument } from "./document";
 import { exportVideo } from "./exportVideo";
+import { useHistoryState } from "./history";
 import { IconRail, type ToolId } from "./IconRail";
 import { SceneRenderer, shiftCursorTrack } from "./renderer";
 import { initialSlices, resizeSlices, sliceAt, splitSliceAt, type ClipSlice } from "./slices";
 import { SliceEditorPanel } from "./SliceEditorPanel";
 import { StylePanel } from "./StylePanel";
-import { DEFAULT_STYLE, type StyleSettings } from "./style";
 import { Timeline } from "./Timeline";
 import { nextPlaybackRate, TopBar } from "./TopBar";
 import { ZoomEditorPanel } from "./ZoomEditorPanel";
@@ -32,6 +32,16 @@ const FALLBACK_PREVIEW_HEIGHT = 560;
  * cursor override). "Export" renders the whole clip with every applied
  * setting baked in (zoom keyframes, trim, slices, styling, cursor overlay,
  * aspect) to wherever the user picks in a save dialog.
+ *
+ * Every one of those settings lives in one `EditorDocument` (see
+ * `document.ts`), managed by `useHistoryState` (`history.ts`) rather than a
+ * separate `useState` per field — that's what makes Undo/Redo (the top
+ * bar's buttons, or ⌘Z/⇧⌘Z) a single linear timeline across all of them
+ * instead of an ambiguous "undo *what*?". Playback-only state (current
+ * time, playback rate, which panel/slice/keyframe is selected, ...) stays
+ * in its own plain `useState`s below — none of it is part of the document,
+ * since none of it survives into `exportVideo` and undoing it wouldn't
+ * mean anything.
  */
 export function EditorView({
   bundlePath,
@@ -51,25 +61,35 @@ export function EditorView({
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [style, setStyle] = useState<StyleSettings>(DEFAULT_STYLE);
-  const [showCursor, setShowCursor] = useState(true);
+  // Timeline hover-scrub preview — set while the mouse is over the
+  // timeline track, `null` otherwise. Deliberately not part of `currentTime`
+  // (the *actual*, committed playhead): hovering should let the canvas show
+  // whatever frame is under the cursor without permanently moving playback,
+  // so a click can still commit to a *different* spot than the last hover.
+  // See `tick` below and `handlePreviewSeek`.
+  const [previewTimeS, setPreviewTimeS] = useState<number | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
-  const [aspectRatioId, setAspectRatioId] = useState<AspectRatioId>("original");
-  const [zoomKeyframes, setZoomKeyframes] = useState<ZoomKeyframe[]>([]);
-  // Effective in/out of the whole clip (video-relative seconds). Defaults to
-  // the full source range once the video metadata loads; trimming the amber
-  // timeline bar writes these, and the render loop/seek clamp playback to
-  // them so nothing plays before `clipStartS` or after `clipEndS`.
-  const [clipStartS, setClipStartS] = useState(0);
-  const [clipEndS, setClipEndS] = useState(0);
-  // Always tiles `[clipStartS, clipEndS)` with no gaps — see `slices.ts`.
-  const [slices, setSlices] = useState<ClipSlice[]>([]);
   const [selectedSliceId, setSelectedSliceId] = useState<string | null>(null);
   const [selectedZoomIndex, setSelectedZoomIndex] = useState<number | null>(null);
   const [activeTool, setActiveTool] = useState<ToolId>("style");
-  const [cursorSettings, setCursorSettings] = useState<CursorSettings>(DEFAULT_CURSOR_SETTINGS);
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+
+  // The undoable document — style, cursor overlay settings, output aspect,
+  // zoom keyframes, clip trim, and slices. See the module doc comment and
+  // `history.ts`/`document.ts`.
+  const {
+    state: doc,
+    canUndo,
+    canRedo,
+    set: setDoc,
+    setTransient: setDocTransient,
+    commit: commitDoc,
+    undo: undoDoc,
+    redo: redoDoc,
+    patch: patchDoc,
+  } = useHistoryState<EditorDocument>(DEFAULT_DOCUMENT);
+  const { style, showCursor, aspectRatioId, zoomKeyframes, clipStartS, clipEndS, slices, cursorSettings } = doc;
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -99,6 +119,13 @@ export function EditorView({
   clipEndRef.current = clipEndS;
   const cursorSettingsRef = useRef(cursorSettings);
   cursorSettingsRef.current = cursorSettings;
+  // Read from `tick` (see the render-loop effect, keyed only on `loaded`)
+  // without becoming a dependency of it — same pattern as the refs above,
+  // but this one changes on every mouse-move over the timeline, so it
+  // especially can't be a dependency without restarting the rAF loop
+  // constantly.
+  const previewTimeSRef = useRef(previewTimeS);
+  previewTimeSRef.current = previewTimeS;
   // `AudioContext` is created lazily, the first time a click sound is
   // actually needed — browsers want that to happen after a user gesture
   // has occurred somewhere on the page, which is already true by the time
@@ -121,10 +148,12 @@ export function EditorView({
           // `SceneRenderer` builds internally (see its constructor) — a
           // keyframe's `center` has to land in the same video-local space
           // the renderer works in, or panning targets the wrong spot for
-          // any window/area recording (non-zero display origin).
+          // any window/area recording (non-zero display origin). Applied
+          // via `patchDoc` (not `setDoc`) — this is initial data arriving,
+          // not a user edit, so it shouldn't be a Redo-able "undo" step.
           const origin = { x: rec.meta.display.originX, y: rec.meta.display.originY };
           const shifted = shiftCursorTrack(rec.cursorTrack, origin);
-          setZoomKeyframes(generateZoomKeyframes(shifted, { factor: 1 }));
+          patchDoc({ zoomKeyframes: generateZoomKeyframes(shifted, { factor: 1 }) });
         }
       })
       .catch((e: unknown) => {
@@ -133,7 +162,7 @@ export function EditorView({
     return () => {
       cancelled = true;
     };
-  }, [bundlePath]);
+  }, [bundlePath, patchDoc]);
 
   // Build the renderer once the bundle's loaded — cursor coordinates are
   // in point space, so the motion engine gets point-space frame
@@ -220,6 +249,18 @@ export function EditorView({
     const tick = () => {
       const renderer = rendererRef.current;
       if (renderer && video.readyState >= 2) {
+        // Hover-scrub preview (see `handlePreviewSeek`): moves
+        // `video.currentTime` for this frame's render only, without ever
+        // touching the committed `currentTime` state below — that's the
+        // whole point of the preview/commit split, so hovering can't drag
+        // the real playhead along with it. Guarded so a mouse that's just
+        // sitting still over the same spot doesn't force a redundant seek
+        // every single frame.
+        const previewS = previewTimeSRef.current;
+        if (previewS !== null && Math.abs(video.currentTime - previewS) > 1e-4) {
+          video.currentTime = previewS;
+        }
+
         const activeSlice = sliceAt(slicesRef.current, video.currentTime);
 
         // A removed slice isn't spliced out of the underlying file (there's
@@ -230,7 +271,14 @@ export function EditorView({
         // unlikely) case where a slice's own end is right at the clip's
         // end and floating-point rounding would otherwise land exactly on
         // `duration`, which the video element can react to as "ended".
-        if (activeSlice?.removed) {
+        //
+        // Skipped entirely while previewing (`previewS !== null`): hovering
+        // is just looking, not committing to play through it, and without
+        // this guard the jump-to-`endS` here fights the seek-to-`previewS`
+        // above every single frame — each undoing the other — as long as
+        // the mouse sits still over a removed region, which flickers
+        // between the two positions instead of settling on either.
+        if (previewS === null && activeSlice?.removed) {
           video.currentTime = Math.min(activeSlice.endS, video.duration || video.currentTime);
           raf = requestAnimationFrame(tick);
           return;
@@ -284,13 +332,41 @@ export function EditorView({
           clipEndTUs,
           activeSlice?.cursorOverride ?? null,
         );
-        setCurrentTime(video.currentTime);
+        // Skip while previewing — the committed playhead (`currentTime`,
+        // and the real solid-white indicator it drives in `Timeline`) must
+        // not move just because the mouse is hovering somewhere.
+        if (previewS === null) {
+          setCurrentTime(video.currentTime);
+        }
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [loaded]);
+
+  // ⌘Z / ⇧⌘Z (or Ctrl on non-Mac) anywhere in the window — the same
+  // history the top bar's Undo/Redo buttons drive. Ignored while a text-
+  // like input has focus (none exist in these panels today, but this is
+  // cheap insurance) and while exporting, matching the top bar buttons'
+  // own `disabled` state there.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      if (exporting) return;
+      e.preventDefault();
+      if (e.shiftKey) {
+        if (canRedo) handleRedo();
+      } else if (canUndo) {
+        handleUndo();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canUndo, canRedo, undoDoc, redoDoc, exporting]);
 
   function togglePlay() {
     const video = videoRef.current;
@@ -317,18 +393,37 @@ export function EditorView({
     setCurrentTime(clamped);
   }
 
-  /** Writes the amber timeline bar's in/out window (video-relative
-   * seconds) and re-tiles `slices` to match. */
-  function trimVideoClip(startS: number, endS: number) {
-    setClipStartS(startS);
-    setClipEndS(endS);
-    setSlices((prev) => resizeSlices(prev, startS, endS));
+  /** Hover-scrub preview from `Timeline` (`onPreviewSeek`) — moves the
+   * canvas to show whatever frame is under the cursor without committing
+   * it as the real, actual playback position. `null` means the mouse left
+   * the timeline: revert to showing the actual committed position, as if
+   * the hover never happened. See `tick`'s render-loop effect above for
+   * the other half of this (it's what actually seeks `video.currentTime`
+   * and skips `setCurrentTime` for a previewed frame). */
+  function handlePreviewSeek(seconds: number | null) {
+    const video = videoRef.current;
+    if (!video || isPlaying) return; // don't fight actual playback
+    if (seconds === null) {
+      setPreviewTimeS(null);
+      video.currentTime = currentTime; // snap back to the real committed position
+      return;
+    }
+    setPreviewTimeS(Math.max(clipStartS, Math.min(seconds, clipEndS)));
+  }
+
+  /** Live update while dragging either handle of the amber timeline bar —
+   * pairs with `commitDoc` (passed to `Timeline` as `onCommitChange`),
+   * which turns the whole drag into one undo step on release. */
+  function trimVideoClipLive(startS: number, endS: number) {
+    setDocTransient((d) => ({ ...d, clipStartS: startS, clipEndS: endS, slices: resizeSlices(d.slices, startS, endS) }));
   }
 
   function cyclePlaybackRate() {
     // Doesn't set `video.playbackRate` directly — the render loop already
     // does that every tick, combining this with any active slice's speed
-    // (see `tick`'s `effectiveRate`).
+    // (see `tick`'s `effectiveRate`). Playback rate is a preview-only
+    // convenience (not part of `EditorDocument`, not passed to
+    // `exportVideo`), so it isn't undoable.
     setPlaybackRate(nextPlaybackRate(playbackRate));
   }
 
@@ -373,11 +468,11 @@ export function EditorView({
   }
 
   function handleSplitClip(atS: number) {
-    setSlices((prev) => splitSliceAt(prev, atS));
+    setDoc((d) => ({ ...d, slices: splitSliceAt(d.slices, atS) }));
   }
 
   function handleSplitZoom(index: number, atT: number) {
-    setZoomKeyframes((prev) => splitKeyframeAt(prev, index, atT));
+    setDoc((d) => ({ ...d, zoomKeyframes: splitKeyframeAt(d.zoomKeyframes, index, atT) }));
   }
 
   function selectSlice(id: string) {
@@ -391,35 +486,67 @@ export function EditorView({
   }
 
   function updateSlice(next: ClipSlice) {
-    setSlices((prev) => prev.map((s) => (s.id === next.id ? next : s)));
+    setDoc((d) => ({ ...d, slices: d.slices.map((s) => (s.id === next.id ? next : s)) }));
   }
 
   function applySpeedToAllSlices() {
     const selected = slices.find((s) => s.id === selectedSliceId);
     if (!selected) return;
-    setSlices((prev) => prev.map((s) => ({ ...s, speed: selected.speed })));
+    setDoc((d) => ({ ...d, slices: d.slices.map((s) => ({ ...s, speed: selected.speed })) }));
   }
 
   function removeSlice() {
     if (!selectedSliceId) return;
-    setSlices((prev) => prev.map((s) => (s.id === selectedSliceId ? { ...s, removed: true } : s)));
+    setDoc((d) => ({ ...d, slices: d.slices.map((s) => (s.id === selectedSliceId ? { ...s, removed: true } : s)) }));
   }
 
-  function updateZoomKeyframe(next: ZoomKeyframe) {
+  /** Live update from `ZoomEditorPanel` — covers *every* field it can
+   * change (level, pan mode, instant animation, disabled, snap-to-edges),
+   * not just the slider-driven ones: `ZoomEditorPanel` itself calls its own
+   * `onCommit` right after this for anything that isn't a slider drag, so
+   * a single click still becomes exactly one undo step. */
+  function updateZoomKeyframeLive(next: ZoomKeyframe) {
     if (selectedZoomIndex === null) return;
-    setZoomKeyframes((prev) => prev.map((k, i) => (i === selectedZoomIndex ? next : k)));
+    setDocTransient((d) => ({
+      ...d,
+      zoomKeyframes: d.zoomKeyframes.map((k, i) => (i === selectedZoomIndex ? next : k)),
+    }));
   }
 
   function applyZoomLevelToAll() {
     if (selectedZoomIndex === null) return;
     const level = zoomKeyframes[selectedZoomIndex].level;
-    setZoomKeyframes((prev) => prev.map((k) => ({ ...k, level })));
+    setDoc((d) => ({ ...d, zoomKeyframes: d.zoomKeyframes.map((k) => ({ ...k, level })) }));
   }
 
   function removeZoomKeyframe() {
     if (selectedZoomIndex === null) return;
-    setZoomKeyframes((prev) => prev.filter((_, i) => i !== selectedZoomIndex));
+    setDoc((d) => ({ ...d, zoomKeyframes: d.zoomKeyframes.filter((_, i) => i !== selectedZoomIndex) }));
     setSelectedZoomIndex(null);
+  }
+
+  /** Live update while dragging a zoom keyframe (move or trim) directly on
+   * the timeline — pairs with `commitDoc` (`Timeline`'s `onCommitChange`). */
+  function updateAllZoomKeyframesLive(next: ZoomKeyframe[]) {
+    setDocTransient((d) => ({ ...d, zoomKeyframes: next }));
+  }
+
+  // Undo/redo clear the current slice/zoom-keyframe selection rather than
+  // trying to keep it pointed at "the same" item across a change whose
+  // array indices/contents it doesn't control — e.g. undoing a removed
+  // keyframe restores the array, but there's no principled index to
+  // reselect. Showing nothing selected is unambiguous; showing the wrong
+  // item selected wouldn't be.
+  function handleUndo() {
+    setSelectedSliceId(null);
+    setSelectedZoomIndex(null);
+    undoDoc();
+  }
+
+  function handleRedo() {
+    setSelectedSliceId(null);
+    setSelectedZoomIndex(null);
+    redoDoc();
   }
 
   if (error) {
@@ -469,14 +596,18 @@ export function EditorView({
       <TopBar
         title={bundlePath.split("/").pop() ?? bundlePath}
         aspectRatioId={aspectRatioId}
-        onChangeAspectRatio={setAspectRatioId}
+        onChangeAspectRatio={(id) => setDoc((d) => ({ ...d, aspectRatioId: id }))}
         showCursor={showCursor}
-        onToggleCursor={() => setShowCursor((v) => !v)}
+        onToggleCursor={() => setDoc((d) => ({ ...d, showCursor: !d.showCursor }))}
         playbackRate={playbackRate}
         onCyclePlaybackRate={cyclePlaybackRate}
         onExport={() => void handleExport()}
         exporting={exporting}
         exportProgress={exportProgress}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
         onRevealInFinder={() => void revealInFinder(bundlePath)}
         onOpenProject={onOpenProject}
         onDelete={() => void handleDelete()}
@@ -510,7 +641,8 @@ export function EditorView({
         ) : selectedZoomKeyframe ? (
           <ZoomEditorPanel
             keyframe={selectedZoomKeyframe}
-            onChange={updateZoomKeyframe}
+            onChange={updateZoomKeyframeLive}
+            onCommit={commitDoc}
             onApplyLevelToAll={applyZoomLevelToAll}
             onRemove={removeZoomKeyframe}
             onClose={() => setSelectedZoomIndex(null)}
@@ -518,12 +650,17 @@ export function EditorView({
         ) : activeTool === "cursor" ? (
           <CursorPanel
             settings={cursorSettings}
-            onChange={setCursorSettings}
+            onChange={(next) => setDocTransient((d) => ({ ...d, cursorSettings: next }))}
+            onCommit={commitDoc}
             showCursor={showCursor}
-            onToggleShowCursor={() => setShowCursor((v) => !v)}
+            onToggleShowCursor={() => setDoc((d) => ({ ...d, showCursor: !d.showCursor }))}
           />
         ) : (
-          <StylePanel style={style} onChange={setStyle} />
+          <StylePanel
+            style={style}
+            onChange={(next) => setDocTransient((d) => ({ ...d, style: next }))}
+            onCommit={commitDoc}
+          />
         )}
       </div>
 
@@ -536,9 +673,9 @@ export function EditorView({
         onLoadedMetadata={(e) => {
           const d = e.currentTarget.duration;
           setDuration(d);
-          setClipStartS(0);
-          setClipEndS(d);
-          setSlices(initialSlices(0, d));
+          // Initial data, not a user edit — see `patchDoc`'s doc comment
+          // on the bundle-load effect above.
+          patchDoc({ clipStartS: 0, clipEndS: d, slices: initialSlices(0, d) });
         }}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
@@ -551,12 +688,14 @@ export function EditorView({
           isPlaying={isPlaying}
           onTogglePlay={togglePlay}
           onSeek={handleSeek}
+          onPreviewSeek={handlePreviewSeek}
           zoomKeyframes={zoomKeyframes}
           videoStartUs={loaded.meta.videoStartUs}
           clipStartS={clipStartS}
           clipEndS={clipEndS}
-          onTrimVideoClip={trimVideoClip}
-          onChangeZoomKeyframes={setZoomKeyframes}
+          onTrimVideoClip={trimVideoClipLive}
+          onChangeZoomKeyframes={updateAllZoomKeyframesLive}
+          onCommitChange={commitDoc}
           slices={slices}
           onSplitClip={handleSplitClip}
           onSelectSlice={selectSlice}
