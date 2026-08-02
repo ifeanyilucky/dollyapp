@@ -20,11 +20,11 @@ use crate::capture;
 const LABEL: &str = "toolbar";
 const WIDTH: f64 = 900.0;
 /// Taller than the visible pill itself (~90px) — a real OS window clips
-/// its own content at its bounds, so the Display/Window dropdown menus
-/// (rendered inside this same window via a Radix portal, not a separate
-/// window) need slack below the pill to actually be visible instead of
-/// being cut off. The pill stays pinned near the top (see `ToolbarView`),
-/// so this only grows the window downward, invisibly, until a menu opens.
+/// its own content at its bounds, so the Display dropdown (rendered inside
+/// this same window via a Radix portal, not a separate window) needs slack
+/// below the pill to actually be visible instead of being cut off. The
+/// pill stays pinned near the top (see `ToolbarView`), so this only grows
+/// the window downward, invisibly, until a menu opens.
 const HEIGHT: f64 = 420.0;
 /// Gap between the toolbar's top edge and the display's own top edge —
 /// clears the menu bar/notch while still reading as "docked to the top",

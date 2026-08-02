@@ -96,7 +96,6 @@ pub fn pick_window_and_record(
         _ => String::new(),
     };
     recorder::set_selected_target(&state, Some(target));
-    close_window_picker(&app);
 
     let _ = app.emit(
         WINDOW_SELECTED_EVENT,
@@ -106,7 +105,15 @@ pub fn pick_window_and_record(
         },
     );
 
-    recorder::start(&app, &state).map_err(|e| e.to_string())
+    // Start first, close only on success — if `recorder::start` fails
+    // (e.g. a recording is already in progress) the overlay stays open so
+    // the frontend can surface the error and the user can cancel. The
+    // overlay is a *window* target's capture-irrelevant sibling anyway, and
+    // the first frame never lands before this returns, so closing after is
+    // safe.
+    recorder::start(&app, &state).map_err(|e| e.to_string())?;
+    close_window_picker(&app);
+    Ok(())
 }
 
 /// Called by the overlay on cancel (Escape) — closes it without changing
@@ -118,6 +125,9 @@ pub fn cancel_window_picker(app: AppHandle) {
 
 fn close_window_picker(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(WINDOW_PICKER_LABEL) {
+        // Hide before close so the always-on-top overlay is off the screen
+        // the moment a recording starts, even if teardown is still running.
+        let _ = window.hide();
         let _ = window.close();
     }
 }
