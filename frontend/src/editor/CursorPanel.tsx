@@ -35,11 +35,19 @@ const STYLE_SWATCH_PAINT: Record<CursorStyleId, { fill: string; stroke: string; 
 export function CursorPanel({
   settings,
   onChange,
+  onCommit,
   showCursor,
   onToggleShowCursor,
 }: {
   settings: CursorSettings;
+  /** Live update — called on every change, including every intermediate
+   * value during a slider drag. */
   onChange: (next: CursorSettings) => void;
+  /** Turns whatever's accumulated since the last commit into a single undo
+   * step (see `history.ts`). Sliders call this themselves once, on drag
+   * release; every discrete control here calls it immediately after
+   * `onChange` via the local `set` helper. */
+  onCommit: () => void;
   showCursor: boolean;
   onToggleShowCursor: () => void;
 }) {
@@ -48,6 +56,13 @@ export function CursorPanel({
   const [expandedRotation, setExpandedRotation] = useState(false);
 
   function set<K extends keyof CursorSettings>(key: K, value: CursorSettings[K]) {
+    onChange({ ...settings, [key]: value });
+    onCommit();
+  }
+
+  /** Live change for slider-driven fields — see `Slider`'s own `onCommit`
+   * below for when this actually becomes an undo step. */
+  function setLive<K extends keyof CursorSettings>(key: K, value: CursorSettings[K]) {
     onChange({ ...settings, [key]: value });
   }
 
@@ -58,7 +73,8 @@ export function CursorPanel({
         value={settings.size}
         min={0}
         max={100}
-        onChange={(v) => set("size", v)}
+        onChange={(v) => setLive("size", v)}
+        onCommit={onCommit}
         onReset={() => set("size", DEFAULT_CURSOR_SETTINGS.size)}
       />
 
@@ -151,14 +167,18 @@ export function CursorPanel({
           value={settings.rotationDeg}
           min={0}
           max={360}
-          onChange={(v) => set("rotationDeg", v)}
+          onChange={(v) => setLive("rotationDeg", v)}
+          onCommit={onCommit}
           onReset={() => set("rotationDeg", DEFAULT_CURSOR_SETTINGS.rotationDeg)}
         />
       </ExpandableRow>
 
       <button
         type="button"
-        onClick={() => onChange(DEFAULT_CURSOR_SETTINGS)}
+        onClick={() => {
+          onChange(DEFAULT_CURSOR_SETTINGS);
+          onCommit();
+        }}
         className="self-start text-xs text-neutral-500 underline underline-offset-2 hover:text-neutral-400"
       >
         Reset all to defaults
