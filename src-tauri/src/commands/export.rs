@@ -53,3 +53,15 @@ pub fn export_write(dest: State<'_, ExportDest>, request: Request<'_>) -> Result
     std::fs::write(&path, bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(())
 }
+
+/// Reads a file back into the webview as a raw byte response — the JS side
+/// gets an `ArrayBuffer`. The export flow uses this (via `fetch` on the
+/// `asset:` protocol, or this command as a fallback) to turn `screen.mov`
+/// into a same-origin `blob:` URL so drawing its frames onto the export
+/// canvas doesn't taint it (`captureStream` throws `SecurityError` on a
+/// non-origin-clean canvas).
+#[tauri::command]
+pub fn read_file_bytes(path: String) -> Result<tauri::ipc::Response, String> {
+    let bytes = std::fs::read(&path).map_err(|e| format!("read {}: {e}", path))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}

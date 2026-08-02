@@ -56,6 +56,7 @@ pub fn run() {
             commands::delete_recording,
             commands::export_set_destination,
             commands::export_write,
+            commands::read_file_bytes,
             commands::enter_toolbar_mode,
             commands::return_to_toolbar,
             commands::close_toolbar,
