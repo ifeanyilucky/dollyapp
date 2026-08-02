@@ -21,4 +21,6 @@ mod targets;
 #[cfg(target_os = "macos")]
 pub use macos::{CapturedFrame, FrameGrabber};
 #[cfg(target_os = "macos")]
-pub use targets::{list_targets, resolve_target, TargetInfo, TargetKind};
+pub use targets::{
+    list_targets, main_display, resolve_target, scale_factor, TargetInfo, TargetKind,
+};

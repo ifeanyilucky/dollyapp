@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use super::RECORDING_STATE_EVENT;
 use crate::bundle::{BundleWriter, DisplayInfo, RecordingMeta};
-use crate::capture::FrameGrabber;
+use crate::capture::{self, FrameGrabber};
 use crate::clock::Clock;
 use crate::cursor;
 
@@ -17,7 +17,7 @@ const FPS: u32 = 60;
 struct ActiveRecording {
     bundle_dir: PathBuf,
     clock: Clock,
-    /// From `scap::get_scale_factor`, for the target this recording
+    /// From `capture::scale_factor`, for the target this recording
     /// actually started against — read once at start rather than at stop,
     /// since a display could in principle be reconfigured mid-recording.
     scale_factor: f64,
@@ -67,8 +67,9 @@ pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
         .lock()
         .unwrap()
         .clone()
-        .unwrap_or_else(|| scap::Target::Display(scap::get_main_display()));
-    let scale_factor = scap::get_scale_factor(&target);
+        .or_else(capture::main_display)
+        .ok_or_else(|| anyhow!("no capturable display found"))?;
+    let scale_factor = capture::scale_factor(&target);
 
     let clock = Clock::start();
     let bundle_dir = new_bundle_dir(app)?;
