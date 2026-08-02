@@ -6,6 +6,7 @@
 mod area_selector;
 mod capture;
 mod editor;
+mod export;
 mod permissions;
 mod recorder;
 mod toolbar;
@@ -14,6 +15,7 @@ mod window_picker;
 pub use area_selector::*;
 pub use capture::*;
 pub use editor::*;
+pub use export::*;
 pub use permissions::*;
 pub use recorder::*;
 pub use toolbar::*;

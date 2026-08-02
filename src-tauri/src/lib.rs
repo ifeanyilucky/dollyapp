@@ -54,6 +54,8 @@ pub fn run() {
             commands::load_recording,
             commands::reveal_in_finder,
             commands::delete_recording,
+            commands::export_set_destination,
+            commands::export_write,
             commands::enter_toolbar_mode,
             commands::return_to_toolbar,
             commands::close_toolbar,
@@ -61,6 +63,7 @@ pub fn run() {
         ])
         .manage(recorder::RecorderState::default())
         .manage(toolbar::ToolbarHitRect::default())
+        .manage(commands::ExportDest::default())
         .setup(|app| {
             use tauri::Manager;
 
