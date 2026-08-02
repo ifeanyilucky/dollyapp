@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for the main window — recorder commands are plain Tauri commands (no ACL needed), so this only needs to grant the core/plugin APIs the frontend calls directly.",
-  "windows": ["main"],
+  "description": "Capabilities for every app window/webview — recorder commands are plain Tauri commands (no ACL needed), so this only needs to grant the core/plugin APIs the frontend calls directly. Covers \"main\" plus the floating toolbar and the area-selector/window-picker overlays (all dynamically created, not declared in tauri.conf.json), which also call `listen()` and need the same core defaults.",
+  "windows": ["main", "toolbar", "area-selector", "window-picker"],
   "permissions": ["core:default", "core:event:default", "shell:default", "global-shortcut:default"]
 }
