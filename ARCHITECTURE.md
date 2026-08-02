@@ -136,6 +136,10 @@ dcutoff   = 1.0
 5. Zoom level comes from cluster spread (tight → 2.0x, wide → 1.4x),
    clamped to 1.2x–3.0x, with the viewport constrained to stay inside frame
    bounds.
+6. A block held 6s or longer gets split into three: the original level, a
+   ~1.6s dip back to 1x around the midpoint, then back to the original
+   level — a long static hold otherwise reads as "stuck" rather than a
+   deliberate hold.
 
 ### Pan follows the live cursor, not a fixed point
 While a zoom keyframe is active, the pan target is the cursor's current

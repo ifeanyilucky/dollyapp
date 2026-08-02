@@ -1,7 +1,7 @@
 /**
  * Turns cursor behavior into zoom keyframes. See ARCHITECTURE.md,
  * "Automatic zoom generation", for the full rationale — this is a direct
- * implementation of that five-step algorithm:
+ * implementation of that six-step algorithm:
  *
  * 1. Find attention anchors (clicks, scroll bursts, typing runs).
  * 2. Cluster anchors that are close in time and space.
@@ -10,6 +10,8 @@
  *    frequent — over-zooming is the most common way this kind of tool
  *    feels amateurish.
  * 5. Pick a zoom level from cluster spread and keep the viewport on-screen.
+ * 6. Give any long-held block a brief dip back to 1x around its midpoint so
+ *    it breathes instead of sitting at one zoom level for the whole hold.
  */
 
 import type { CursorEvent, CursorSample, CursorTrack } from "../bundle/types";
@@ -85,6 +87,12 @@ const BASE = {
   // threshold it tops out at 2.0x. Interpolated linearly between.
   tightSpreadPx: 40,
   wideSpreadPx: 400,
+  // A keyframe held this long or longer reads as a static "stuck" zoom
+  // rather than a deliberate hold, so it gets a brief breathing dip back
+  // toward 1x around its midpoint instead of holding one level throughout.
+  dipEligibleDurationUs: 6e6,
+  dipDurationUs: 1.6e6,
+  dipLevel: 1.0,
 };
 
 interface Anchor {
@@ -214,6 +222,32 @@ function mergeKeyframes(a: ZoomKeyframe, b: ZoomKeyframe): ZoomKeyframe {
   };
 }
 
+/** Splits any keyframe held longer than `dipEligibleDurationUs` into three:
+ * the original level, a brief dip to `dipLevel` around the midpoint, then
+ * back to the original level — so a long hold breathes instead of sitting
+ * at one zoom level for the whole clip. Disabled keyframes are left alone
+ * since they're not actually zoomed in. */
+function insertMidHoldDips(keyframes: ZoomKeyframe[], sensitivity: number): ZoomKeyframe[] {
+  const dipEligibleDurationUs = BASE.dipEligibleDurationUs * sensitivity;
+  const dipDurationUs = BASE.dipDurationUs * sensitivity;
+
+  const result: ZoomKeyframe[] = [];
+  for (const kf of keyframes) {
+    const duration = kf.endT - kf.startT;
+    if (kf.disabled || duration < dipEligibleDurationUs) {
+      result.push(kf);
+      continue;
+    }
+    const mid = (kf.startT + kf.endT) / 2;
+    const dipStart = mid - dipDurationUs / 2;
+    const dipEnd = mid + dipDurationUs / 2;
+    result.push({ ...kf, endT: dipStart });
+    result.push({ ...kf, startT: dipStart, endT: dipEnd, level: BASE.dipLevel });
+    result.push({ ...kf, startT: dipEnd });
+  }
+  return result;
+}
+
 /** Generates zoom keyframes from a recording's cursor track. */
 export function generateZoomKeyframes(
   track: CursorTrack,
@@ -259,7 +293,10 @@ export function generateZoomKeyframes(
     keyframes = merged;
   }
 
-  return keyframes.filter((kf) => kf.endT - kf.startT >= BASE.minDurationUs * factor);
+  return insertMidHoldDips(
+    keyframes.filter((kf) => kf.endT - kf.startT >= BASE.minDurationUs * factor),
+    factor,
+  );
 }
 
 /**

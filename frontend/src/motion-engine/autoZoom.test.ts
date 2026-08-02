@@ -67,6 +67,30 @@ describe("generateZoomKeyframes", () => {
     const [kf] = generateZoomKeyframes(t);
     expect(kf.endT - kf.startT).toBeGreaterThanOrEqual(1.2e6);
   });
+
+  it("splits a long hold into a mid-hold dip back toward 1x", () => {
+    const t = track({
+      events: Array.from({ length: 8 }, (_, i) => ({
+        kind: "leftDown" as const,
+        t: i * 1_000_000,
+        x: 500,
+        y: 500,
+      })),
+    });
+
+    const keyframes = generateZoomKeyframes(t);
+    expect(keyframes).toHaveLength(3);
+    const [before, dip, after] = keyframes;
+
+    expect(before.level).toBeGreaterThan(1);
+    expect(after.level).toEqual(before.level);
+    expect(dip.level).toBe(1.0);
+
+    // Contiguous, in order, covering the same overall span as one block would.
+    expect(dip.startT).toEqual(before.endT);
+    expect(after.startT).toEqual(dip.endT);
+    expect(after.endT - before.startT).toBeGreaterThanOrEqual(7.8e6);
+  });
 });
 
 describe("viewportForKeyframe", () => {
