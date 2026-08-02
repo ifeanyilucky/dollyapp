@@ -376,11 +376,7 @@ fn run_capture(
 }
 
 fn new_bundle_dir(app: &AppHandle) -> Result<PathBuf> {
-    let base = app
-        .path()
-        .video_dir()
-        .context("could not resolve the user's Movies directory")?
-        .join("Dolly");
+    let base = crate::projects::recordings_dir(app)?;
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

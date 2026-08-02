@@ -4,11 +4,14 @@ pub mod capture;
 pub mod clock;
 pub mod commands;
 pub mod cursor;
+mod dock;
 pub mod encode;
 pub mod export;
 pub mod fs;
 pub mod permissions;
+mod projects;
 pub mod recorder;
+mod settings;
 mod shortcut;
 mod toolbar;
 mod tray;
@@ -61,12 +64,21 @@ pub fn run() {
             commands::return_to_toolbar,
             commands::close_toolbar,
             commands::set_toolbar_hit_rect,
+            commands::get_settings,
+            commands::set_show_in_dock,
+            commands::open_settings_window,
         ])
         .manage(recorder::RecorderState::default())
         .manage(toolbar::ToolbarHitRect::default())
         .manage(commands::ExportDest::default())
         .setup(|app| {
             use tauri::Manager;
+
+            // Applies whatever Dock-visibility preference was persisted
+            // last run (defaults to visible) before anything else shows —
+            // see `dock::set_visible` and the tray's "Show Dolly in Dock"
+            // checkbox, which is the only way this changes afterward.
+            dock::set_visible(app.handle(), settings::load(app.handle()).show_in_dock);
 
             tray::setup(app.handle())?;
             shortcut::setup(app.handle())?;
