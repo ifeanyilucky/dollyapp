@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 /// in the motion engine needs oversampled input to smooth well. See
 /// ARCHITECTURE.md "The motion engine".
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CursorTrack {
     pub version: u32,
     /// Must equal `RecordingMeta::clock_epoch` for the same recording.
@@ -34,6 +35,7 @@ impl CursorTrack {
 /// `Date.now()` / `Instant::now()` on their own, always derived from the
 /// shared epoch (ARCHITECTURE.md "Recording format").
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CursorSample {
     pub t: u64,
     pub x: f64,

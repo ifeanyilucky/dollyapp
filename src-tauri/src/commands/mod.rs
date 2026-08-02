@@ -4,9 +4,11 @@
 //! testable without spinning up a Tauri app.
 
 mod capture;
+mod editor;
 mod permissions;
 mod recorder;
 
 pub use capture::*;
+pub use editor::*;
 pub use permissions::*;
 pub use recorder::*;

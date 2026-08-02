@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// `meta.json` — written once, at the end of a recording.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RecordingMeta {
     pub version: u32,
     /// `mach_absolute_time` at the moment the first video frame landed.
@@ -19,6 +20,7 @@ pub struct RecordingMeta {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DisplayInfo {
     pub width_px: u32,
     pub height_px: u32,
