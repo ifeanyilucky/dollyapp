@@ -335,7 +335,7 @@ export function Timeline({
         </div>
 
         <div
-          className={`relative mt-1 h-9 overflow-hidden rounded-md bg-neutral-900 ${splitArmed ? "cursor-crosshair" : ""}`}
+          className={`relative mt-1 h-12 overflow-hidden rounded-md bg-neutral-900 ${splitArmed ? "cursor-crosshair" : ""}`}
         >
           {slices.map((slice, i) => {
             const leftPct = clampPct((slice.startS / safeDuration) * 100);
@@ -345,12 +345,12 @@ export function Timeline({
             return (
               <div
                 key={slice.id}
-                className={`group absolute top-0 flex h-full items-center justify-center overflow-hidden shadow-md shadow-black/40 ${
+                className={`group absolute top-0 flex h-full items-center justify-center overflow-hidden ${
                   isFirst ? "rounded-l-md" : ""
                 } ${isLast ? "rounded-r-md" : ""} ${
                   slice.removed
                     ? "bg-[repeating-linear-gradient(135deg,rgba(0,0,0,0.55)_0_6px,rgba(0,0,0,0.35)_6px_12px)]"
-                    : "bg-amber-600/70"
+                    : "bg-gradient-to-b from-amber-700 to-amber-300 shadow-[inset_0_-3px_5px_rgba(0,0,0,0.45)]"
                 } ${!isFirst ? "border-l border-neutral-950/40" : ""} ${splitArmed ? "" : "cursor-pointer"}`}
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                 onClick={(e) => handleSliceClick(e, slice)}
@@ -393,7 +393,7 @@ export function Timeline({
         </div>
 
         <div
-          className={`relative mt-1.5 h-7 rounded-md bg-neutral-800/60 ${splitArmed ? "cursor-crosshair" : ""}`}
+          className={`relative mt-1.5 h-9 rounded-md bg-neutral-800/60 ${splitArmed ? "cursor-crosshair" : ""}`}
         >
           {zoomKeyframes.map((kf, index) => {
             const startS = (kf.startT - videoStartUs) / 1e6;
@@ -404,8 +404,8 @@ export function Timeline({
             return (
               <div
                 key={index}
-                className={`group absolute top-0 flex h-full items-center justify-center overflow-hidden rounded-md text-[10px] font-medium text-white shadow-md shadow-black/40 ${
-                  kf.disabled ? "bg-neutral-600/70" : "bg-indigo-500/80"
+                className={`group absolute top-0 flex h-full items-center justify-center overflow-hidden rounded-md text-[10px] font-medium text-white shadow-[inset_0_-3px_5px_rgba(0,0,0,0.45)] ${
+                  kf.disabled ? "bg-gradient-to-b from-neutral-700 to-neutral-400" : "bg-gradient-to-b from-indigo-800 to-indigo-400"
                 } ${
                   splitArmed
                     ? "cursor-crosshair"
