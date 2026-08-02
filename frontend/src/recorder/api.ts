@@ -25,3 +25,10 @@ export function pauseRecording(): Promise<void> {
 export function resumeRecording(): Promise<void> {
   return invoke("resume_recording");
 }
+
+/** Only marks the toggle — the caller must already have confirmed
+ * microphone permission (see `permissions/api.ts`,
+ * `requestMicrophonePermission`) before enabling. */
+export function setMicEnabled(enabled: boolean): Promise<void> {
+  return invoke("set_mic_enabled", { enabled });
+}

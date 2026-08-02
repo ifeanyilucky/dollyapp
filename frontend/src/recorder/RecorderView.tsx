@@ -1,3 +1,4 @@
+import { MicToggle } from "./MicToggle";
 import { TargetPicker } from "./TargetPicker";
 import { useRecordingState } from "./useRecordingState";
 
@@ -6,7 +7,8 @@ import { useRecordingState } from "./useRecordingState";
  * reflecting the same state the tray menu and `⌥⌘2` control (PRD §9: menu
  * bar is the primary entry point, this window included for completeness).
  * Region selection isn't built yet — `TargetPicker` only covers whole
- * displays/windows.
+ * displays/windows. System audio isn't built yet either (see
+ * `src-tauri/src/recorder`'s doc comment) — `MicToggle` is mic-only.
  */
 export function RecorderView() {
   const { isRecording, isPaused, busy, error, lastRecordingPath, start, stop, togglePause } =
@@ -17,6 +19,7 @@ export function RecorderView() {
       <h1 className="text-lg font-medium text-neutral-100">Dolly</h1>
 
       <TargetPicker disabled={isRecording || busy} />
+      <MicToggle disabled={isRecording || busy} />
 
       <div className="flex items-center gap-2">
         <button
