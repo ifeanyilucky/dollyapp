@@ -3,13 +3,17 @@ import { listen } from "@tauri-apps/api/event";
 import {
   AppWindowMac,
   ChevronDown,
+  Circle,
   Crop,
   Mic,
   MicOff,
   Monitor,
   MonitorSpeaker,
+  Pause,
+  Play,
   Settings,
   Smartphone,
+  Square,
   Video,
   X,
 } from "lucide-react";
@@ -35,14 +39,29 @@ interface AreaSelectedPayload {
 }
 
 /**
- * The pre-recording source/device picker — full display, a specific
- * window, a custom-dragged area, or (not built) a connected device, plus
- * camera/mic/system-audio toggles. Mic is real; camera and system audio
- * aren't implemented anywhere in the capture pipeline yet (see
- * `recorder::start`'s doc comment), so those two stay visibly inert
- * rather than pretending to work.
+ * The floating toolbar's contents (see `ToolbarView`) — source/device
+ * picker (full display, a specific window, a custom-dragged area, or not
+ * built, a connected device), camera/mic/system-audio toggles, and the
+ * start/stop/pause controls. Mic is real; camera and system audio aren't
+ * implemented anywhere in the capture pipeline yet (see `recorder::start`'s
+ * doc comment), so those two stay visibly inert rather than pretending to
+ * work.
  */
-export function SourcePickerBar({ disabled }: { disabled: boolean }) {
+export function SourcePickerBar({
+  disabled,
+  isRecording,
+  isPaused,
+  busy,
+  onToggleRecording,
+  onTogglePause,
+}: {
+  disabled: boolean;
+  isRecording: boolean;
+  isPaused: boolean;
+  busy: boolean;
+  onToggleRecording: () => void;
+  onTogglePause: () => void;
+}) {
   const [targets, setTargets] = useState<TargetInfo[]>([]);
   const [mode, setMode] = useState<SourceMode>("display");
   const [selectedWindowId, setSelectedWindowId] = useState<number | null>(null);
@@ -231,6 +250,36 @@ export function SourcePickerBar({ disabled }: { disabled: boolean }) {
         >
           <Settings className="h-4 w-4" />
           <ChevronDown className="h-3.5 w-3.5" />
+        </button>
+
+        <div className="mx-1 h-8 w-px bg-neutral-800" />
+
+        {isRecording && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onTogglePause}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-neutral-300 hover:bg-neutral-800 disabled:opacity-40"
+            aria-label={isPaused ? "Resume recording" : "Pause recording"}
+            title={isPaused ? "Resume" : "Pause"}
+          >
+            {isPaused ? <Play className="h-4 w-4" fill="currentColor" /> : <Pause className="h-4 w-4" fill="currentColor" />}
+          </button>
+        )}
+
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onToggleRecording}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-500 disabled:opacity-40"
+          aria-label={isRecording ? "Stop recording" : "Start recording"}
+          title={isRecording ? "Stop recording" : "Start recording"}
+        >
+          {isRecording ? (
+            <Square className="h-3.5 w-3.5" fill="currentColor" />
+          ) : (
+            <Circle className="h-4 w-4" fill="currentColor" />
+          )}
         </button>
       </div>
 

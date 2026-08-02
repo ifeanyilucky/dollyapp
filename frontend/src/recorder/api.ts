@@ -4,6 +4,26 @@ import { invoke } from "@tauri-apps/api/core";
  * `src-tauri/src/recorder::RECORDING_STATE_EVENT`. */
 export const RECORDING_STATE_EVENT = "recording-state-changed";
 
+/** Payload (the finished bundle's path) of the `recording-finished` event
+ * — see `src-tauri/src/recorder::RECORDING_FINISHED_EVENT`. The floating
+ * toolbar (where recording starts/stops) and the regular window (which
+ * opens the result in the editor) are separate webviews with no shared
+ * React state, so this event is how the latter learns what to open. */
+export const RECORDING_FINISHED_EVENT = "recording-finished";
+
+/** Hides the regular window and shows the floating toolbar — called once,
+ * right after Screen Recording permission is granted for the first time
+ * (see `PermissionsGate`'s `onGranted`). */
+export function enterToolbarMode(): Promise<void> {
+  return invoke("enter_toolbar_mode");
+}
+
+/** Hides the regular window and shows the floating toolbar — the reverse
+ * of the swap `recording-finished` triggers, called when the editor closes. */
+export function returnToToolbar(): Promise<void> {
+  return invoke("return_to_toolbar");
+}
+
 export function getRecordingStatus(): Promise<boolean> {
   return invoke("recording_status");
 }

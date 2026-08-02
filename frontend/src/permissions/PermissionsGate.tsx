@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   getScreenRecordingStatus,
   openScreenRecordingSettings,
@@ -22,17 +22,35 @@ type GateState =
  * own explanation before the OS prompt ever fires — ARCHITECTURE.md,
  * "Permissions", rule 1: never trigger a permission prompt cold.
  */
-export function PermissionsGate({ children }: { children: ReactNode }) {
+export function PermissionsGate({
+  children,
+  onGranted,
+}: {
+  children: ReactNode;
+  /** Fires once, only when this *explicit request* flow (the "Continue"
+   * button below) succeeds — never from the passive mount-time check, so
+   * it only ever fires during a genuine first run. Used to hand off from
+   * the regular window (showing this gate) to the floating toolbar. */
+  onGranted?: () => void;
+}) {
   const [state, setState] = useState<GateState>({ phase: "checking" });
 
-  useEffect(() => {
-    void refreshStatus();
-  }, []);
+  /** `notifyIfGranted`: true for the user-initiated "check again" retry —
+   * false for the passive mount-time check, so `onGranted` only ever
+   * fires from an explicit action, matching `handleContinue`'s own rule. */
+  const refreshStatus = useCallback(
+    async (notifyIfGranted: boolean) => {
+      const status = await getScreenRecordingStatus();
+      const next = toGateState(status);
+      setState(next);
+      if (notifyIfGranted && next.phase === "granted") onGranted?.();
+    },
+    [onGranted],
+  );
 
-  async function refreshStatus() {
-    const status = await getScreenRecordingStatus();
-    setState(toGateState(status));
-  }
+  useEffect(() => {
+    void refreshStatus(false);
+  }, [refreshStatus]);
 
   async function handleContinue() {
     setState({ phase: "requesting" });
@@ -41,7 +59,12 @@ export function PermissionsGate({ children }: { children: ReactNode }) {
     // Historically requires an app relaunch to take effect even once
     // granted (ARCHITECTURE.md, "Permissions", rule 4) — re-checking here
     // catches the case where it didn't.
-    setState(status === "authorized" ? { phase: "granted" } : { phase: "stillNotGranted" });
+    if (status === "authorized") {
+      setState({ phase: "granted" });
+      onGranted?.();
+    } else {
+      setState({ phase: "stillNotGranted" });
+    }
   }
 
   if (state.phase === "checking") {
@@ -90,7 +113,7 @@ export function PermissionsGate({ children }: { children: ReactNode }) {
               </button>
               <button
                 type="button"
-                onClick={() => void refreshStatus()}
+                onClick={() => void refreshStatus(true)}
                 className="text-xs text-neutral-500 underline underline-offset-2"
               >
                 I've granted it — check again
