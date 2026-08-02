@@ -44,9 +44,17 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # A newer objc2 generation than objc2-app-kit above (0.6 vs 0.5) — the two
 # don't share Retained types, so permissions code built on this stays
 # self-contained rather than passing objc2 values across the boundary.
-objc2-av-foundation = { version = "0.3", default-features = false, features = ["AVCaptureDevice", "AVMediaFormat", "block2"] }
+objc2-av-foundation = { version = "0.3", default-features = false, features = ["AVCaptureDevice", "AVMediaFormat", "AVAssetWriter", "AVAssetWriterInput", "AVVideoSettings", "objc2-core-media", "objc2-core-video", "block2"] }
 objc2-avf = { package = "objc2", version = "0.6" }
 block2-avf = { package = "block2", version = "0.6" }
+# Building the AVAssetWriter output-settings dictionary (NSDictionary,
+# NSNumber, NSString, NSURL) needs direct access to this objc2 0.6
+# generation's Foundation types — objc2-av-foundation only re-exports the
+# ones its own method signatures use, not general-purpose constructors.
+objc2-foundation-avf = { package = "objc2-foundation", version = "0.3" }
+objc2-core-video = "0.3"
+objc2-core-media = "0.3"
+objc2-core-foundation = "0.3"
 # Mic capture (AVAudioEngine). Same objc2 0.6 generation as objc2-av-foundation
 # above — kept self-contained in src-tauri/src/audio for the same reason.
 objc2-avf-audio = { version = "0.3", default-features = false, features = ["AVAudioEngine", "AVAudioIONode", "AVAudioNode", "AVAudioBuffer", "AVAudioFormat", "AVAudioTime", "AVAudioTypes", "block2"] }

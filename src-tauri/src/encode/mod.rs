@@ -1,8 +1,19 @@
-//! VideoToolbox hardware encode: `capture`'s raw frames -> `screen.mov`.
+//! VideoToolbox-backed encode: capture's BGRA frames -> a real `screen.mov`.
 //!
-//! Not built yet. Belongs to M1 (recorder core needs a real `screen.mov`,
-//! not the M0 PNG sequence) — see `src-tauri/src/capture/mod.rs` for why
-//! M0 deliberately doesn't produce one. Expected shape once it exists:
-//! a `VideoToolboxEncoder` that takes `capture::CapturedFrame`s (switched
-//! to YUV BiPlanar by then) and an `AVAssetWriter` sink, so it stays
-//! GPU-resident end to end per ARCHITECTURE.md's capture table.
+//! Goes through `AVAssetWriter` rather than a hand-rolled `VTCompressionSession`
+//! — `AVAssetWriterInputPixelBufferAdaptor` accepts `kCVPixelFormatType_32BGRA`
+//! directly (see the doc comment on `appendPixelBuffer:withPresentationTime:`
+//! in Apple's headers), so `capture`'s existing BGRA frames need no format
+//! conversion to reach it. This sidesteps needing to hand-roll `SCStream`/
+//! `SCStreamOutput` (which would need `objc2::define_class!` protocol
+//! conformance — a substantially larger undertaking) since `scap` already
+//! does that capture-side work; only the encode-and-mux side was missing.
+//!
+//! System audio is still not here — it would need that same hand-rolled
+//! `SCStream` audio output, so it stays deferred alongside it.
+
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(target_os = "macos")]
+pub use macos::MovWriter;
