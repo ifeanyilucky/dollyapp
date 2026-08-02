@@ -76,6 +76,42 @@ describe("MotionEngine pan-follows-cursor", () => {
   });
 });
 
+describe("MotionEngine.setKeyframes", () => {
+  it("a keyframe added after construction takes effect on the next transformAt", () => {
+    const engine = new MotionEngine(FRAME, []);
+    // Idle — no keyframe covers t=1s yet, so level stays at 1x.
+    expect(stepFor(engine, 1).viewport.width).toBeCloseTo(FRAME.width, 0);
+
+    engine.setKeyframes([{ startT: 0, endT: 5_000_000, level: 2, center: { x: 960, y: 540 } }]);
+    const level = FRAME.width / stepFor(engine, 3).viewport.width;
+    expect(level).toBeGreaterThan(1.5);
+  });
+
+  it("shortening a keyframe's window (a timeline trim) takes effect on the same, already-running engine", () => {
+    const engine = new MotionEngine(FRAME, [
+      { startT: 0, endT: 5_000_000, level: 2, center: { x: 960, y: 540 } },
+    ]);
+    // Settle into the zoom.
+    stepFor(engine, 2);
+    const zoomedLevel = FRAME.width / engine.transformAt(2_000_000).viewport.width;
+    expect(zoomedLevel).toBeGreaterThan(1.5);
+
+    // Trim the keyframe so it now ends *before* the current time (2s) —
+    // simulating a timeline edit shortening it while playback is already
+    // past the new end. No `reset()` — this must apply live.
+    engine.setKeyframes([{ startT: 0, endT: 1_000_000, level: 2, center: { x: 960, y: 540 } }]);
+
+    let t = 2_000_000;
+    let level = zoomedLevel;
+    for (let i = 0; i < 200; i++) {
+      t += 16_000;
+      level = FRAME.width / engine.transformAt(t).viewport.width;
+    }
+    expect(level).toBeLessThan(zoomedLevel);
+    expect(level).toBeCloseTo(1, 0);
+  });
+});
+
 describe("MotionEngine stability under large/janky dt", () => {
   it("a single huge dt (simulating a dropped-frame hitch) doesn't overshoot past the target", () => {
     const keyframes: ZoomKeyframe[] = [

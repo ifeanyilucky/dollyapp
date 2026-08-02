@@ -93,8 +93,8 @@ export function Timeline({
   for (let t = 0; t <= safeDuration; t += tickInterval) ticks.push(t);
   const playheadPct = clampPct((currentTime / safeDuration) * 100);
 
-  function secondsAtClientX(clientX: number, rect: DOMRect): number {
-    const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+  function secondsAtClientX(clientX: number, left: number, width: number): number {
+    const frac = Math.min(1, Math.max(0, (clientX - left) / width));
     return frac * safeDuration;
   }
 
@@ -117,8 +117,8 @@ export function Timeline({
     onMove: (deltaS: number) => void,
   ) {
     if (tool !== "none") return;
-    const rect = trackRef.current?.getBoundingClientRect();
-    if (!rect) return;
+    const trackWidth = trackRef.current?.getBoundingClientRect().width;
+    if (!trackWidth) return;
     e.preventDefault();
     e.stopPropagation();
 
@@ -128,16 +128,16 @@ export function Timeline({
     target.setPointerCapture(pointerId);
     setActiveDrag(kind);
 
-    function handleMove(ev: PointerEvent) {
-      onMove(((ev.clientX - startX) / rect.width) * safeDuration);
-    }
-    function handleEnd() {
+    const handleMove = (ev: PointerEvent) => {
+      onMove(((ev.clientX - startX) / trackWidth) * safeDuration);
+    };
+    const handleEnd = () => {
       target.removeEventListener("pointermove", handleMove);
       target.removeEventListener("pointerup", handleEnd);
       target.removeEventListener("pointercancel", handleEnd);
       if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
       setActiveDrag(null);
-    }
+    };
     target.addEventListener("pointermove", handleMove);
     target.addEventListener("pointerup", handleEnd);
     target.addEventListener("pointercancel", handleEnd);
@@ -149,9 +149,11 @@ export function Timeline({
   function beginRegionDrag(e: React.PointerEvent<HTMLDivElement>) {
     const rect = trackRef.current?.getBoundingClientRect();
     if (!rect) return;
+    const trackLeft = rect.left;
+    const trackWidth = rect.width;
 
     if (tool === "none") {
-      onSeek(secondsAtClientX(e.clientX, rect));
+      onSeek(secondsAtClientX(e.clientX, trackLeft, trackWidth));
       return;
     }
 
@@ -159,19 +161,19 @@ export function Timeline({
     const target = e.currentTarget;
     const pointerId = e.pointerId;
     target.setPointerCapture(pointerId);
-    const startS = secondsAtClientX(e.clientX, rect);
+    const startS = secondsAtClientX(e.clientX, trackLeft, trackWidth);
     setRegionDrag({ startS, endS: startS });
 
-    function handleMove(ev: PointerEvent) {
-      setRegionDrag({ startS, endS: secondsAtClientX(ev.clientX, rect) });
-    }
-    function handleEnd(ev: PointerEvent) {
+    const handleMove = (ev: PointerEvent) => {
+      setRegionDrag({ startS, endS: secondsAtClientX(ev.clientX, trackLeft, trackWidth) });
+    };
+    const handleEnd = (ev: PointerEvent) => {
       target.removeEventListener("pointermove", handleMove);
       target.removeEventListener("pointerup", handleEnd);
       target.removeEventListener("pointercancel", handleEnd);
       if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
 
-      const endS = secondsAtClientX(ev.clientX, rect);
+      const endS = secondsAtClientX(ev.clientX, trackLeft, trackWidth);
       const lo = Math.min(startS, endS);
       const hi = Math.max(startS, endS);
       setRegionDrag(null);
@@ -180,7 +182,7 @@ export function Timeline({
       if (tool === "cut") onAddCut({ id, startS: lo, endS: hi });
       else onAddSpeed({ id, startS: lo, endS: hi, rate: SPEED_REGION_RATES[0] });
       setTool("none");
-    }
+    };
     target.addEventListener("pointermove", handleMove);
     target.addEventListener("pointerup", handleEnd);
     target.addEventListener("pointercancel", handleEnd);
