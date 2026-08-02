@@ -13,12 +13,16 @@ import { useRecordingState } from "./useRecordingState";
  * regular window instead — see `recorder::RECORDING_FINISHED_EVENT`,
  * which that window listens for, since this is a different webview with
  * no shared React state.
+ *
+ * The window itself (see `toolbar::show`) is taller than the pill below —
+ * top-aligned here, on purpose, so the extra space stays invisible until
+ * the Display/Window dropdowns need room to render into it.
  */
 export function ToolbarView() {
   const { isRecording, isPaused, busy, error, start, stop, togglePause } = useRecordingState();
 
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-transparent">
+    <div className="flex h-screen w-screen justify-center bg-transparent pt-2">
       <div className="flex flex-col items-center gap-1.5">
         <SourcePickerBar
           disabled={isRecording || busy}

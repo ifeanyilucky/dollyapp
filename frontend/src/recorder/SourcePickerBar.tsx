@@ -17,7 +17,7 @@ import {
   Video,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { forwardRef, useEffect, useState } from "react";
 import { getMicrophoneStatus, openMicrophoneSettings, requestMicrophonePermission } from "../permissions/api";
 import { setMicEnabled } from "./api";
 import {
@@ -309,38 +309,36 @@ function PickerMenu({ children }: { children: React.ReactNode }) {
   );
 }
 
-function TabButton({
-  icon: Icon,
-  label,
-  sublabel,
-  active,
-  disabled,
-  onClick,
-  title,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  sublabel?: string;
-  active: boolean;
-  disabled?: boolean;
-  onClick?: () => void;
-  title?: string;
-}) {
+/** Used both as a plain button and as a Radix `DropdownMenu.Trigger`'s
+ * `asChild` target (the Display/Window tabs, when there's more than one to
+ * choose from) — Radix requires an `asChild` target to forward its ref and
+ * pass through the props it injects (`onPointerDown`, `aria-*`,
+ * `data-state`, ...), or the trigger silently doesn't open anything. Hence
+ * `forwardRef` + `...rest` here rather than a plain function component. */
+const TabButton = forwardRef<
+  HTMLButtonElement,
+  React.ComponentPropsWithoutRef<"button"> & {
+    icon: React.ComponentType<{ className?: string }>;
+    label: string;
+    sublabel?: string;
+    active: boolean;
+  }
+>(function TabButton({ icon: Icon, label, sublabel, active, title, className, ...rest }, ref) {
   return (
     <button
+      ref={ref}
       type="button"
-      disabled={disabled}
-      onClick={onClick}
       title={title ?? (sublabel ? `${label}: ${sublabel}` : label)}
       className={`flex h-12 w-16 flex-col items-center justify-center gap-0.5 rounded-lg text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-30 ${
         active ? "bg-neutral-800 text-neutral-50" : "text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-200"
-      }`}
+      } ${className ?? ""}`}
+      {...rest}
     >
       <Icon className="h-4 w-4" />
       <span className="max-w-[60px] truncate">{sublabel ?? label}</span>
     </button>
   );
-}
+});
 
 function ToggleChip({
   icon: Icon,
