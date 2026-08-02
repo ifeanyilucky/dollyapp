@@ -390,8 +390,13 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
         onClose={onClose}
       />
 
-      <div className="flex flex-1 items-center justify-center gap-4 overflow-hidden p-6">
-        <div className="flex h-full flex-1 items-center justify-center">
+      {/* `min-h-0` on this row and `min-w-0`/`min-h-0` on the canvas well
+       * below override flexbox's default `min-width/height: auto`, which
+       * otherwise floors a flex item at its content's intrinsic size —
+       * without it, shrinking the window doesn't shrink the canvas, it
+       * just gets silently clipped by `overflow-hidden` instead. */}
+      <div className="flex min-h-0 flex-1 items-stretch justify-center gap-4 overflow-hidden p-6">
+        <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center">
           <canvas
             ref={canvasRef}
             width={canvasWidth}

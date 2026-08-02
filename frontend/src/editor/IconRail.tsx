@@ -26,7 +26,7 @@ export type ToolId = (typeof TOOLS)[number]["id"];
  */
 export function IconRail({ active, onSelect }: { active: ToolId; onSelect: (id: ToolId) => void }) {
   return (
-    <div className="flex w-11 shrink-0 flex-col items-center gap-1 rounded-xl border border-neutral-800/80 bg-neutral-950/70 py-1">
+    <div className="flex w-11 min-h-0 shrink-0 flex-col items-center justify-center gap-1 overflow-y-auto rounded-xl border border-neutral-800/80 bg-neutral-950/70 py-1">
       {TOOLS.map(({ id, icon: Icon, label }) => {
         const wired = WIRED_TOOLS.has(id);
         return (
