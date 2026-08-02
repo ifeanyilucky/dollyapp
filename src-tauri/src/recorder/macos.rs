@@ -23,6 +23,9 @@ struct ActiveRecording {
     /// actually started against — read once at start rather than at stop,
     /// since a display could in principle be reconfigured mid-recording.
     scale_factor: f64,
+    /// From `capture::target_origin`, same "read once at start" reasoning
+    /// as `scale_factor` above — see `DisplayInfo::origin_x`'s doc comment.
+    origin: (f64, f64),
     /// `Some` while recording, `None` while paused — pause/resume only
     /// bracket a cursor-track `Gap`, they don't touch this (PRD §9: "do
     /// not try to splice video during capture").
@@ -56,6 +59,11 @@ struct CaptureOutcome {
 pub struct RecorderState {
     active: Mutex<Option<ActiveRecording>>,
     selected_target: Mutex<Option<scap::Target>>,
+    /// A user-picked sub-rectangle of `selected_target` (PRD §9's "region"
+    /// picker) — `None` records the whole target. Cleared whenever
+    /// `selected_target` changes, since a stale area from a previously
+    /// selected display/window wouldn't make sense against a new one.
+    selected_area: Mutex<Option<capture::CropArea>>,
     /// Opt-in, read at the next `start()` — never enabled implicitly, per
     /// the lazy-permission-request rule (ARCHITECTURE.md, "Permissions").
     mic_enabled: Mutex<bool>,
@@ -65,9 +73,19 @@ pub fn is_recording(state: &RecorderState) -> bool {
     state.active.lock().unwrap().is_some()
 }
 
-/// `None` clears the selection, falling back to the main display.
+/// `None` clears the selection, falling back to the main display. Also
+/// clears any selected area — see `RecorderState::selected_area`'s doc
+/// comment.
 pub fn set_selected_target(state: &RecorderState, target: Option<scap::Target>) {
     *state.selected_target.lock().unwrap() = target;
+    *state.selected_area.lock().unwrap() = None;
+}
+
+/// Sets (or, with `None`, clears) a sub-rectangle of the *currently
+/// selected* target to record instead of the whole thing. Doesn't touch
+/// `selected_target` itself — callers pick the target first.
+pub fn set_selected_area(state: &RecorderState, area: Option<capture::CropArea>) {
+    *state.selected_area.lock().unwrap() = area;
 }
 
 /// The frontend is expected to have already requested (and confirmed)
@@ -92,6 +110,9 @@ pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
         .or_else(capture::main_display)
         .ok_or_else(|| anyhow!("no capturable display found"))?;
     let scale_factor = capture::scale_factor(&target);
+    let area = *state.selected_area.lock().unwrap();
+    let origin = capture::target_origin(&target, area);
+    let crop_area = area.map(|a| capture::crop_area_for_target(a, &target));
 
     let clock = Clock::start();
     let bundle_dir = new_bundle_dir(app)?;
@@ -106,7 +127,7 @@ pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
         let bundle_dir = bundle_dir.clone();
         std::thread::Builder::new()
             .name("dolly-capture".into())
-            .spawn(move || run_capture(clock, capture_stop, bundle_dir, target))
+            .spawn(move || run_capture(clock, capture_stop, bundle_dir, target, crop_area))
             .context("failed to spawn capture thread")?
     };
 
@@ -128,6 +149,7 @@ pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
         bundle_dir,
         clock,
         scale_factor,
+        origin,
         is_paused: false,
         capture_stop,
         capture_thread: Some(capture_thread),
@@ -187,6 +209,8 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
             width_px: outcome.width,
             height_px: outcome.height,
             scale_factor: active.scale_factor,
+            origin_x: active.origin.0,
+            origin_y: active.origin.1,
         },
         duration_us: active.clock.now_us(),
         has_webcam: false,
@@ -232,9 +256,10 @@ fn run_capture(
     stop_flag: Arc<AtomicBool>,
     bundle_dir: PathBuf,
     target: scap::Target,
+    crop_area: Option<scap::capturer::Area>,
 ) -> Result<CaptureOutcome> {
     let mov_path = bundle_dir.join(names::SCREEN_VIDEO);
-    let mut grabber = FrameGrabber::new(clock, FPS, Some(target))?;
+    let mut grabber = FrameGrabber::new(clock, FPS, Some(target), crop_area)?;
     // `MovWriter` needs frame dimensions up front (for the AVAssetWriter
     // output-settings dict), which aren't known until the first frame
     // arrives — so it's created lazily rather than passed in.

@@ -3,11 +3,13 @@
 //! `recorder`, ...) rather than holding logic itself, so that logic stays
 //! testable without spinning up a Tauri app.
 
+mod area_selector;
 mod capture;
 mod editor;
 mod permissions;
 mod recorder;
 
+pub use area_selector::*;
 pub use capture::*;
 pub use editor::*;
 pub use permissions::*;

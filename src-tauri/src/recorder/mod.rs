@@ -11,7 +11,8 @@ mod macos;
 
 #[cfg(target_os = "macos")]
 pub use macos::{
-    is_recording, pause, resume, set_mic_enabled, set_selected_target, start, stop, RecorderState,
+    is_recording, pause, resume, set_mic_enabled, set_selected_area, set_selected_target, start,
+    stop, RecorderState,
 };
 
 /// Tauri event name, payload `bool` (true = now recording). Emitted by
