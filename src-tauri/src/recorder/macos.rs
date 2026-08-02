@@ -7,7 +7,8 @@ use anyhow::{anyhow, Context, Result};
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::RECORDING_STATE_EVENT;
-use crate::bundle::{BundleWriter, DisplayInfo, RecordingMeta};
+use crate::audio::MicRecorder;
+use crate::bundle::{names, BundleWriter, DisplayInfo, RecordingMeta};
 use crate::capture::{self, FrameGrabber};
 use crate::clock::Clock;
 use crate::cursor;

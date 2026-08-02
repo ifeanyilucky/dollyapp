@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod bundle;
 pub mod capture;
 pub mod clock;
