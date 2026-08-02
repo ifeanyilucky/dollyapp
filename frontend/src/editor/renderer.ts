@@ -1,10 +1,11 @@
-import type { CursorEvent, CursorSample, CursorTrack } from "../bundle/types";
+import type { CursorEvent, CursorSample, CursorTrack, CursorType } from "../bundle/types";
 import {
   MotionEngine,
   smoothCursorTrack,
   type FrameSize,
   type ZoomKeyframe,
 } from "../motion-engine";
+import { cursorSizeMultiplier, DEFAULT_CURSOR_SETTINGS, type CursorSettings, type CursorStyleId } from "./cursorSettings";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
 import { GRADIENT_PRESETS, paintCanvasGradient, WALLPAPER_IMAGES } from "./wallpapers";
 
@@ -13,8 +14,17 @@ const CLICK_RIPPLE_DURATION_US = 500_000;
 /** Fixed apparent size, independent of zoom level — the whole point of
  * redrawing the cursor rather than relying on captured pixels
  * (ARCHITECTURE.md, "Cursor rendering"). Big and readable, per the intent
- * of a screen-recording tool whose entire pitch is legibility. */
+ * of a screen-recording tool whose entire pitch is legibility. This is
+ * the *base* size before `CursorSettings.size`'s multiplier is applied. */
 const CURSOR_SIZE_PX = 34;
+/** `CursorSettings.loopCursorPosition`'s blend window, capped to 30% of
+ * the clip for anything shorter than this. */
+const LOOP_BLEND_DURATION_US = 1_200_000;
+/** `CursorSettings.hideCursorIfNotMoving`'s lookback window and movement
+ * threshold — small enough to catch a real pause quickly, large enough
+ * not to flicker during a slow, deliberate drag. */
+const IDLE_WINDOW_US = 500_000;
+const IDLE_THRESHOLD_PX = 3;
 
 interface Rect {
   x: number;
@@ -140,13 +150,17 @@ export class SceneRenderer {
 
   /** `tUs`: microseconds since the recording's clock epoch — see
    * `RecordingMeta.videoStartUs` for how to derive this from a `<video>`
-   * element's `currentTime`. */
+   * element's `currentTime`. `clipEndTUs`: same epoch, the clip's current
+   * out-point (respects a timeline trim, not just the source recording's
+   * raw length) — used only for `cursorSettings.loopCursorPosition`. */
   draw(
     ctx: CanvasRenderingContext2D,
     video: HTMLVideoElement,
     tUs: number,
     style: StyleSettings = DEFAULT_STYLE,
     showCursor = true,
+    cursorSettings: CursorSettings = DEFAULT_CURSOR_SETTINGS,
+    clipEndTUs = 0,
   ): void {
     const canvas = ctx.canvas;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -154,7 +168,7 @@ export class SceneRenderer {
 
     const content = this.contentRect(canvas.width, canvas.height, style.padding);
 
-    const cursor = this.cursorPositionAt(tUs);
+    const cursor = this.effectiveCursorPositionAt(tUs, clipEndTUs, cursorSettings.loopCursorPosition);
     // Live cursor position drives pan while a zoom is active (see
     // ARCHITECTURE.md, "Pan follows the live cursor") — computed before
     // `transformAt` so it can be passed straight in.
@@ -198,12 +212,16 @@ export class SceneRenderer {
     // `cursor` still drives pan above even when the glyph itself is
     // hidden — this flag is purely visual, not a "stop tracking" switch.
     if (!cursor || !showCursor) return;
+    // Idle-hide checks the *raw* (non-loop-blended) position — a loop
+    // blend nudging the cursor a fraction of a pixel per frame shouldn't
+    // itself count as "moving".
+    if (cursorSettings.hideCursorIfNotMoving && this.isCursorIdleAt(tUs)) return;
 
     const cx = content.x + ((cursor.x - viewport.x) / viewport.width) * content.width;
     const cy = content.y + ((cursor.y - viewport.y) / viewport.height) * content.height;
 
-    this.drawClickRipples(ctx, tUs, viewport, content);
-    drawCursorGlyph(ctx, cx, cy, this.clickPulseScaleAt(tUs));
+    if (cursorSettings.clickEffectEnabled) this.drawClickRipples(ctx, tUs, viewport, content);
+    drawCursorGlyph(ctx, cx, cy, this.clickPulseScaleAt(tUs), this.cursorTypeAt(tUs), cursorSettings);
   }
 
   /** Video content rect, centered in the canvas and inset by `padding` on
@@ -398,6 +416,61 @@ export class SceneRenderer {
     return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
   }
 
+  /** `cursorPositionAt`, blended toward the clip's first sample over the
+   * last `LOOP_BLEND_DURATION_US` before `clipEndTUs` — see
+   * `CursorSettings.loopCursorPosition`'s doc comment. A no-op (returns
+   * the raw position) unless `loopEnabled`, or for a clip too short to
+   * have a meaningful blend window. */
+  private effectiveCursorPositionAt(
+    tUs: number,
+    clipEndTUs: number,
+    loopEnabled: boolean,
+  ): { x: number; y: number } | null {
+    const raw = this.cursorPositionAt(tUs);
+    const first = this.smoothedSamples[0];
+    if (!raw || !first || !loopEnabled || clipEndTUs <= 0) return raw;
+
+    const remaining = clipEndTUs - tUs;
+    if (remaining < 0) return raw;
+    const blendWindowUs = Math.min(LOOP_BLEND_DURATION_US, (clipEndTUs - first.t) * 0.3);
+    if (blendWindowUs <= 0 || remaining >= blendWindowUs) return raw;
+
+    const f = 1 - remaining / blendWindowUs;
+    return { x: raw.x + (first.x - raw.x) * f, y: raw.y + (first.y - raw.y) * f };
+  }
+
+  /** Nearest recorded sample's `type` at `tUs` — categorical, so this
+   * picks the closer neighbor rather than interpolating like
+   * `cursorPositionAt` does for position. */
+  private cursorTypeAt(tUs: number): CursorType {
+    const samples = this.smoothedSamples;
+    if (samples.length === 0) return "arrow";
+    if (tUs <= samples[0].t) return samples[0].type;
+    const last = samples[samples.length - 1];
+    if (tUs >= last.t) return last.type;
+
+    let lo = 0;
+    let hi = samples.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (samples[mid].t <= tUs) lo = mid + 1;
+      else hi = mid;
+    }
+    const b = samples[lo];
+    const a = samples[lo - 1];
+    return tUs - a.t <= b.t - tUs ? a.type : b.type;
+  }
+
+  /** Whether the cursor has moved less than a few pixels over the last
+   * `IDLE_WINDOW_US` — drives `CursorSettings.hideCursorIfNotMoving`. Uses
+   * the *raw* (non-loop-blended) position; see `draw`'s call site. */
+  private isCursorIdleAt(tUs: number): boolean {
+    const now = this.cursorPositionAt(tUs);
+    const before = this.cursorPositionAt(Math.max(0, tUs - IDLE_WINDOW_US));
+    if (!now || !before) return false;
+    return Math.hypot(now.x - before.x, now.y - before.y) < IDLE_THRESHOLD_PX;
+  }
+
   private clickPulseScaleAt(tUs: number): number {
     let scale = 1;
     for (const event of this.events) {
@@ -447,17 +520,19 @@ function roundedRectPath(ctx: CanvasRenderingContext2D, rect: Rect, radius: numb
   ctx.closePath();
 }
 
-/** A simplified macOS-arrow-like pointer path, filled white with a dark
- * outline so it reads on any background. Not a real `NSCursor` asset (see
- * ARCHITECTURE.md's note that those still need shipping per-type) — this
- * is the placeholder that's actually visible and animated in the
- * meantime. */
-function drawCursorGlyph(ctx: CanvasRenderingContext2D, x: number, y: number, scale: number): void {
-  const s = (CURSOR_SIZE_PX / 30) * scale;
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(s, s);
+/** Fill/stroke treatment per `CursorSettings.style` — applied to the
+ * arrow/dot glyph; the type-specific shapes below (I-beam, resize) just
+ * borrow `fill` as a single stroke color, since they're line-art rather
+ * than filled shapes. */
+const STYLE_PAINT: Record<CursorStyleId, { fill: string | null; stroke: string; strokeWidth: number }> = {
+  outline: { fill: "#ffffff", stroke: "rgba(0,0,0,0.55)", strokeWidth: 1.5 },
+  thin: { fill: "#ffffff", stroke: "rgba(0,0,0,0.35)", strokeWidth: 0.75 },
+  dot: { fill: "#9ca3af", stroke: "rgba(0,0,0,0.3)", strokeWidth: 1 },
+  solidBlack: { fill: "#111111", stroke: "rgba(255,255,255,0.25)", strokeWidth: 1 },
+  solidGray: { fill: "#6b7280", stroke: "rgba(0,0,0,0.3)", strokeWidth: 1 },
+};
 
+function traceArrowPath(ctx: CanvasRenderingContext2D): void {
   ctx.beginPath();
   ctx.moveTo(0, 0);
   ctx.lineTo(0, 22);
@@ -467,15 +542,105 @@ function drawCursorGlyph(ctx: CanvasRenderingContext2D, x: number, y: number, sc
   ctx.lineTo(8.7, 16.5);
   ctx.lineTo(15, 16.5);
   ctx.closePath();
+}
 
-  ctx.fillStyle = "#ffffff";
-  ctx.strokeStyle = "#00000090";
-  ctx.lineWidth = 1.5;
+function traceDotPath(ctx: CanvasRenderingContext2D): void {
+  ctx.beginPath();
+  ctx.arc(6, 8, 7, 0, Math.PI * 2);
+}
+
+/** Classic text-cursor I-beam: a vertical bar with top/bottom serifs. */
+function traceIBeamPath(ctx: CanvasRenderingContext2D): void {
+  ctx.beginPath();
+  ctx.moveTo(-5, 0);
+  ctx.lineTo(5, 0);
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, 24);
+  ctx.moveTo(-5, 24);
+  ctx.lineTo(5, 24);
+}
+
+/** A double-headed arrow, horizontal or vertical — window/pane resize. */
+function traceResizePath(ctx: CanvasRenderingContext2D, horizontal: boolean): void {
+  const len = 13;
+  const head = 5;
+  ctx.beginPath();
+  if (horizontal) {
+    ctx.moveTo(-len, 0);
+    ctx.lineTo(len, 0);
+    ctx.moveTo(-len + head, -head);
+    ctx.lineTo(-len, 0);
+    ctx.lineTo(-len + head, head);
+    ctx.moveTo(len - head, -head);
+    ctx.lineTo(len, 0);
+    ctx.lineTo(len - head, head);
+  } else {
+    ctx.moveTo(0, -len);
+    ctx.lineTo(0, len);
+    ctx.moveTo(-head, -len + head);
+    ctx.lineTo(0, -len);
+    ctx.lineTo(head, -len + head);
+    ctx.moveTo(-head, len - head);
+    ctx.lineTo(0, len);
+    ctx.lineTo(head, len - head);
+  }
+}
+
+/**
+ * Redraws a cursor glyph rather than compositing captured pixels
+ * (ARCHITECTURE.md, "Cursor rendering") — fixed apparent size regardless
+ * of zoom, so it's always legible. `type` (the recorded `CursorType`)
+ * picks the base shape unless `settings.alwaysPointerCursor` pins it to
+ * the arrow; `settings.style` picks the arrow/dot's paint treatment (the
+ * line-art shapes — I-beam, resize — always use the style's `fill` color
+ * as a single stroke, since there's nothing to fill).
+ */
+function drawCursorGlyph(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  pulseScale: number,
+  type: CursorType,
+  settings: CursorSettings,
+): void {
+  const effectiveType = settings.alwaysPointerCursor ? "arrow" : type;
+  const paint = STYLE_PAINT[settings.style];
+  const s = (CURSOR_SIZE_PX / 30) * pulseScale * cursorSizeMultiplier(settings.size);
+
+  ctx.save();
+  ctx.translate(x, y);
+  if (settings.rotationDeg) ctx.rotate((settings.rotationDeg * Math.PI) / 180);
+  ctx.scale(s, s);
   ctx.shadowColor = "rgba(0,0,0,0.4)";
-  ctx.shadowBlur = 3;
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.stroke();
 
+  if (effectiveType === "iBeam" || effectiveType === "resizeLeftRight" || effectiveType === "resizeUpDown") {
+    if (effectiveType === "iBeam") traceIBeamPath(ctx);
+    else traceResizePath(ctx, effectiveType === "resizeLeftRight");
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = paint.fill ?? paint.stroke;
+    ctx.shadowBlur = 2;
+    ctx.stroke();
+  } else {
+    // arrow, pointingHand, closedHand, other — pointing/closed hand fall
+    // back to the arrow shape rather than shipping bespoke (and likely
+    // low-quality, hand-drawn) hand iconography for a secondary case.
+    if (settings.style === "dot") traceDotPath(ctx);
+    else traceArrowPath(ctx);
+    ctx.shadowBlur = 3;
+    if (paint.fill) {
+      ctx.fillStyle = paint.fill;
+      ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+    if (paint.strokeWidth > 0) {
+      ctx.strokeStyle = paint.stroke;
+      ctx.lineWidth = paint.strokeWidth;
+      ctx.stroke();
+    }
+  }
+
+  ctx.shadowBlur = 0;
   ctx.restore();
 }

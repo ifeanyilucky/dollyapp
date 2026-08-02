@@ -3,7 +3,10 @@ import { useEffect, useRef, useState } from "react";
 import { generateZoomKeyframes, type ZoomKeyframe } from "../motion-engine";
 import { aspectRatioPreset, type AspectRatioId } from "./aspect";
 import { deleteRecording, loadRecording, revealInFinder, type LoadedRecording } from "./api";
-import { IconRail } from "./IconRail";
+import { playClickSound } from "./clickSound";
+import { CursorPanel } from "./CursorPanel";
+import { DEFAULT_CURSOR_SETTINGS, type CursorSettings } from "./cursorSettings";
+import { IconRail, type ToolId } from "./IconRail";
 import {
   addRegion,
   regionAt,
@@ -49,6 +52,8 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   // them so nothing plays before `clipStartS` or after `clipEndS`.
   const [clipStartS, setClipStartS] = useState(0);
   const [clipEndS, setClipEndS] = useState(0);
+  const [activeTool, setActiveTool] = useState<ToolId>("style");
+  const [cursorSettings, setCursorSettings] = useState<CursorSettings>(DEFAULT_CURSOR_SETTINGS);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -71,6 +76,17 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   clipStartRef.current = clipStartS;
   const clipEndRef = useRef(clipEndS);
   clipEndRef.current = clipEndS;
+  const cursorSettingsRef = useRef(cursorSettings);
+  cursorSettingsRef.current = cursorSettings;
+  // `AudioContext` is created lazily, the first time a click sound is
+  // actually needed — browsers want that to happen after a user gesture
+  // has occurred somewhere on the page, which is already true by the time
+  // playback (itself gesture-triggered) reaches a click event.
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  // Only sounds for click events strictly after this get played — sourced
+  // from `tick`'s own `tUs` each frame and reset on seek, so a scrub never
+  // replays every click between the old and new position at once.
+  const lastSoundCheckTUsRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -139,6 +155,14 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
     rendererRef.current?.setZoomKeyframes(zoomKeyframes);
   }, [loaded, zoomKeyframes]);
 
+  // Releases the click-sound `AudioContext` (if one was ever created) when
+  // the editor closes, rather than leaking it for as long as the app runs.
+  useEffect(() => {
+    return () => {
+      void audioCtxRef.current?.close();
+    };
+  }, []);
+
   // Render loop: reads `video.currentTime` directly every animation
   // frame rather than relying on the `timeupdate` event, which fires far
   // less often than 60fps.
@@ -187,7 +211,27 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
         }
 
         const tUs = video.currentTime * 1_000_000 + loaded.meta.videoStartUs;
-        renderer.draw(ctx, video, tUs, styleRef.current, showCursorRef.current);
+        const clipEndTUs = clipEndRef.current * 1_000_000 + loaded.meta.videoStartUs;
+
+        // Only while actually playing forward — not on every redrawn scrub
+        // frame — and only for click events strictly between the last
+        // check and now, so a seek can't replay a burst of old sounds.
+        if (cursorSettingsRef.current.clickSoundEnabled && !video.paused) {
+          const from = lastSoundCheckTUsRef.current;
+          if (
+            tUs > from &&
+            loaded.cursorTrack.events.some(
+              (e) => (e.kind === "leftDown" || e.kind === "rightDown") && e.t > from && e.t <= tUs,
+            )
+          ) {
+            if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+            if (audioCtxRef.current.state === "suspended") void audioCtxRef.current.resume();
+            playClickSound(audioCtxRef.current);
+          }
+        }
+        lastSoundCheckTUsRef.current = tUs;
+
+        renderer.draw(ctx, video, tUs, styleRef.current, showCursorRef.current, cursorSettingsRef.current, clipEndTUs);
         setCurrentTime(video.currentTime);
       }
       raf = requestAnimationFrame(tick);
@@ -213,7 +257,11 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
     if (!video || !loaded) return;
     const clamped = Math.max(clipStartS, Math.min(seconds, clipEndS));
     video.currentTime = clamped;
-    rendererRef.current?.resetAt(clamped * 1_000_000 + loaded.meta.videoStartUs);
+    const tUs = clamped * 1_000_000 + loaded.meta.videoStartUs;
+    rendererRef.current?.resetAt(tUs);
+    // A seek shouldn't replay every click sound between the old and new
+    // position — see `tick`'s own comment on this ref.
+    lastSoundCheckTUsRef.current = tUs;
     setCurrentTime(clamped);
   }
 
@@ -305,7 +353,6 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
       />
 
       <div className="flex flex-1 items-center justify-center gap-4 overflow-hidden p-6">
-        <IconRail />
         <div className="flex h-full flex-1 items-center justify-center">
           <canvas
             ref={canvasRef}
@@ -314,7 +361,17 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
             className="max-h-full max-w-full rounded-lg"
           />
         </div>
-        <StylePanel style={style} onChange={setStyle} />
+        <IconRail active={activeTool} onSelect={setActiveTool} />
+        {activeTool === "cursor" ? (
+          <CursorPanel
+            settings={cursorSettings}
+            onChange={setCursorSettings}
+            showCursor={showCursor}
+            onToggleShowCursor={() => setShowCursor((v) => !v)}
+          />
+        ) : (
+          <StylePanel style={style} onChange={setStyle} />
+        )}
       </div>
 
       {/* Hidden — used purely as a decoded-frame source for the canvas. */}
