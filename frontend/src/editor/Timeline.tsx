@@ -366,7 +366,7 @@ export function Timeline({
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                 title={splitArmed ? "Click to split here" : `Zoom ${kf.level.toFixed(1)}x`}
                 onPointerDown={(e) => handleZoomMove(e, kf, index)}
-                onClick={(e) => handleZoomClick(e, kf, index)}
+                onClick={(e) => handleZoomClick(e, index)}
               >
                 {widthPct > 6 ? `${kf.level.toFixed(1)}x` : ""}
                 <div

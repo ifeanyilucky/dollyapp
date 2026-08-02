@@ -1,25 +1,20 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
-import { generateZoomKeyframes, type ZoomKeyframe } from "../motion-engine";
+import { generateZoomKeyframes, splitKeyframeAt, type ZoomKeyframe } from "../motion-engine";
 import { aspectRatioPreset, type AspectRatioId } from "./aspect";
 import { deleteRecording, loadRecording, revealInFinder, type LoadedRecording } from "./api";
 import { playClickSound } from "./clickSound";
 import { CursorPanel } from "./CursorPanel";
 import { DEFAULT_CURSOR_SETTINGS, type CursorSettings } from "./cursorSettings";
 import { IconRail, type ToolId } from "./IconRail";
-import {
-  addRegion,
-  regionAt,
-  removeRegion,
-  SPEED_REGION_RATES,
-  type CutRegion,
-  type SpeedRegion,
-} from "./regions";
 import { SceneRenderer, shiftCursorTrack } from "./renderer";
+import { initialSlices, resizeSlices, sliceAt, splitSliceAt, type ClipSlice } from "./slices";
+import { SliceEditorPanel } from "./SliceEditorPanel";
 import { StylePanel } from "./StylePanel";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
 import { Timeline } from "./Timeline";
 import { nextPlaybackRate, TopBar } from "./TopBar";
+import { ZoomEditorPanel } from "./ZoomEditorPanel";
 
 const MAX_PREVIEW_WIDTH = 760;
 const MAX_PREVIEW_HEIGHT = 560;
@@ -29,9 +24,10 @@ const MAX_PREVIEW_HEIGHT = 560;
  * engine export will eventually use (ARCHITECTURE.md, "preview and export
  * must never diverge"), with auto-generated zoom/pan that follows the live
  * cursor, an animated cursor overlay, background/padding/shadow styling,
- * an output aspect ratio switch, and cut/speed regions. No true export
- * (motion baked into an output file) yet — cut/speed, like everything
- * else here, only affects preview playback.
+ * an output aspect ratio switch, and split-based clip slices (speed +
+ * per-slice cursor override). No true export (motion baked into an output
+ * file) yet — slices/zoom edits, like everything else here, only affect
+ * preview playback.
  */
 export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClose: () => void }) {
   const [loaded, setLoaded] = useState<LoadedRecording | null>(null);
@@ -43,8 +39,6 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   const [showCursor, setShowCursor] = useState(true);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [aspectRatioId, setAspectRatioId] = useState<AspectRatioId>("original");
-  const [cutRegions, setCutRegions] = useState<CutRegion[]>([]);
-  const [speedRegions, setSpeedRegions] = useState<SpeedRegion[]>([]);
   const [zoomKeyframes, setZoomKeyframes] = useState<ZoomKeyframe[]>([]);
   // Effective in/out of the whole clip (video-relative seconds). Defaults to
   // the full source range once the video metadata loads; trimming the amber
@@ -52,14 +46,18 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   // them so nothing plays before `clipStartS` or after `clipEndS`.
   const [clipStartS, setClipStartS] = useState(0);
   const [clipEndS, setClipEndS] = useState(0);
+  // Always tiles `[clipStartS, clipEndS)` with no gaps — see `slices.ts`.
+  const [slices, setSlices] = useState<ClipSlice[]>([]);
+  const [selectedSliceId, setSelectedSliceId] = useState<string | null>(null);
+  const [selectedZoomIndex, setSelectedZoomIndex] = useState<number | null>(null);
   const [activeTool, setActiveTool] = useState<ToolId>("style");
   const [cursorSettings, setCursorSettings] = useState<CursorSettings>(DEFAULT_CURSOR_SETTINGS);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<SceneRenderer | null>(null);
-  // Style/cursor-visibility/region changes can fire rapidly (slider drags,
-  // region drags) or need to be read from a rAF loop that shouldn't
+  // Style/cursor-visibility/slice changes can fire rapidly (slider drags,
+  // slice edits) or need to be read from a rAF loop that shouldn't
   // restart every tick — refs let `tick` always see the latest value
   // without becoming a dependency of the render-loop effect.
   const styleRef = useRef(style);
@@ -68,10 +66,8 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   showCursorRef.current = showCursor;
   const playbackRateRef = useRef(playbackRate);
   playbackRateRef.current = playbackRate;
-  const cutRegionsRef = useRef(cutRegions);
-  cutRegionsRef.current = cutRegions;
-  const speedRegionsRef = useRef(speedRegions);
-  speedRegionsRef.current = speedRegions;
+  const slicesRef = useRef(slices);
+  slicesRef.current = slices;
   const clipStartRef = useRef(clipStartS);
   clipStartRef.current = clipStartS;
   const clipEndRef = useRef(clipEndS);
@@ -144,12 +140,12 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
     rendererRef.current?.setOutputAspect(aspectRatioPreset(aspectRatioId).ratio ?? undefined);
   }, [loaded, aspectRatioId]);
 
-  // Live zoom-keyframe edits (move/trim in the timeline) — this is the fix
-  // for the preview never matching what the timeline showed: the renderer
-  // used to generate its *own*, independent copy of these keyframes
-  // internally and never learned about edits made here. Now `zoomKeyframes`
-  // is the single source of truth for both the timeline's visualization
-  // and actual playback.
+  // Live zoom-keyframe edits (move/trim/split in the timeline, or the zoom
+  // editor panel) — this is the fix for the preview never matching what
+  // the timeline showed: the renderer used to generate its *own*,
+  // independent copy of these keyframes internally and never learned
+  // about edits made here. Now `zoomKeyframes` is the single source of
+  // truth for both the timeline's visualization and actual playback.
   useEffect(() => {
     if (!loaded) return;
     rendererRef.current?.setZoomKeyframes(zoomKeyframes);
@@ -177,17 +173,18 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
     const tick = () => {
       const renderer = rendererRef.current;
       if (renderer && video.readyState >= 2) {
-        // Cut regions aren't spliced out of the underlying file (there's
+        const activeSlice = sliceAt(slicesRef.current, video.currentTime);
+
+        // A removed slice isn't spliced out of the underlying file (there's
         // no export pipeline to bake that into yet) — instead, playback
-        // simply jumps over one the instant it's entered, whether that's
+        // simply jumps over it the instant it's entered, whether that's
         // from continuous playback reaching it or a seek landing inside
         // it. `duration || video.currentTime` guards the (astronomically
-        // unlikely) case where a region's own end is right at the clip's
+        // unlikely) case where a slice's own end is right at the clip's
         // end and floating-point rounding would otherwise land exactly on
         // `duration`, which the video element can react to as "ended".
-        const cut = regionAt(cutRegionsRef.current, video.currentTime);
-        if (cut) {
-          video.currentTime = Math.min(cut.endS, video.duration || video.currentTime);
+        if (activeSlice?.removed) {
+          video.currentTime = Math.min(activeSlice.endS, video.duration || video.currentTime);
           raf = requestAnimationFrame(tick);
           return;
         }
@@ -204,8 +201,7 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
           video.pause();
         }
 
-        const speed = regionAt(speedRegionsRef.current, video.currentTime);
-        const effectiveRate = playbackRateRef.current * (speed?.rate ?? 1);
+        const effectiveRate = playbackRateRef.current * (activeSlice?.speed ?? 1);
         if (Math.abs(video.playbackRate - effectiveRate) > 1e-6) {
           video.playbackRate = effectiveRate;
         }
@@ -231,7 +227,16 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
         }
         lastSoundCheckTUsRef.current = tUs;
 
-        renderer.draw(ctx, video, tUs, styleRef.current, showCursorRef.current, cursorSettingsRef.current, clipEndTUs);
+        renderer.draw(
+          ctx,
+          video,
+          tUs,
+          styleRef.current,
+          showCursorRef.current,
+          cursorSettingsRef.current,
+          clipEndTUs,
+          activeSlice?.cursorOverride ?? null,
+        );
         setCurrentTime(video.currentTime);
       }
       raf = requestAnimationFrame(tick);
@@ -265,20 +270,18 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
     setCurrentTime(clamped);
   }
 
-  /** Writes the amber timeline bar's in/out window (video-relative seconds). */
+  /** Writes the amber timeline bar's in/out window (video-relative
+   * seconds) and re-tiles `slices` to match. */
   function trimVideoClip(startS: number, endS: number) {
     setClipStartS(startS);
     setClipEndS(endS);
-  }
-
-  function changeZoomKeyframes(keyframes: ZoomKeyframe[]) {
-    setZoomKeyframes(keyframes);
+    setSlices((prev) => resizeSlices(prev, startS, endS));
   }
 
   function cyclePlaybackRate() {
     // Doesn't set `video.playbackRate` directly — the render loop already
-    // does that every tick, combining this with any active speed region's
-    // multiplier (see `tick`'s `effectiveRate`).
+    // does that every tick, combining this with any active slice's speed
+    // (see `tick`'s `effectiveRate`).
     setPlaybackRate(nextPlaybackRate(playbackRate));
   }
 
@@ -288,22 +291,54 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
     onClose();
   }
 
-  function addCutRegion(region: CutRegion) {
-    setCutRegions((regions) => addRegion(regions, region));
+  function handleSplitClip(atS: number) {
+    setSlices((prev) => splitSliceAt(prev, atS));
   }
 
-  function addSpeedRegion(region: SpeedRegion) {
-    setSpeedRegions((regions) => addRegion(regions, region));
+  function handleSplitZoom(index: number, atT: number) {
+    setZoomKeyframes((prev) => splitKeyframeAt(prev, index, atT));
   }
 
-  function cycleSpeedRegionRate(id: string) {
-    setSpeedRegions((regions) =>
-      regions.map((r) => {
-        if (r.id !== id) return r;
-        const idx = SPEED_REGION_RATES.indexOf(r.rate);
-        return { ...r, rate: SPEED_REGION_RATES[(idx + 1) % SPEED_REGION_RATES.length] };
-      }),
-    );
+  function selectSlice(id: string) {
+    setSelectedSliceId(id);
+    setSelectedZoomIndex(null);
+  }
+
+  function selectZoomKeyframe(index: number) {
+    setSelectedZoomIndex(index);
+    setSelectedSliceId(null);
+  }
+
+  function updateSlice(next: ClipSlice) {
+    setSlices((prev) => prev.map((s) => (s.id === next.id ? next : s)));
+  }
+
+  function applySpeedToAllSlices() {
+    const selected = slices.find((s) => s.id === selectedSliceId);
+    if (!selected) return;
+    setSlices((prev) => prev.map((s) => ({ ...s, speed: selected.speed })));
+  }
+
+  function removeSlice() {
+    if (!selectedSliceId) return;
+    setSlices((prev) => prev.map((s) => (s.id === selectedSliceId ? { ...s, removed: true } : s)));
+  }
+
+  function updateZoomKeyframe(next: ZoomKeyframe) {
+    if (selectedZoomIndex === null) return;
+    setZoomKeyframes((prev) => prev.map((k, i) => (i === selectedZoomIndex ? next : k)));
+  }
+
+  function applyZoomLevelToAll() {
+    if (selectedZoomIndex === null) return;
+    const level = zoomKeyframes[selectedZoomIndex].level;
+    setZoomKeyframes((prev) => prev.map((k) => ({ ...k, level })));
+  }
+
+  function removeZoomKeyframe() {
+    if (selectedZoomIndex === null) return;
+    setZoomKeyframes((prev) => prev.filter((_, i) => i !== selectedZoomIndex));
+    setSelectedZoomIndex(null);
   }
 
   if (error) {
@@ -337,6 +372,9 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
     canvasWidth = Math.round(canvasHeight * outputAspect);
   }
 
+  const selectedSlice = slices.find((s) => s.id === selectedSliceId);
+  const selectedZoomKeyframe = selectedZoomIndex !== null ? zoomKeyframes[selectedZoomIndex] : undefined;
+
   return (
     <div className="flex h-screen w-screen flex-col bg-neutral-950 text-neutral-300">
       <TopBar
@@ -362,7 +400,24 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
           />
         </div>
         <IconRail active={activeTool} onSelect={setActiveTool} />
-        {activeTool === "cursor" ? (
+        {selectedSlice ? (
+          <SliceEditorPanel
+            slice={selectedSlice}
+            onChange={updateSlice}
+            onApplySpeedToAll={applySpeedToAllSlices}
+            onRemove={removeSlice}
+            canRemove={slices.filter((s) => !s.removed).length > 1}
+            onClose={() => setSelectedSliceId(null)}
+          />
+        ) : selectedZoomKeyframe ? (
+          <ZoomEditorPanel
+            keyframe={selectedZoomKeyframe}
+            onChange={updateZoomKeyframe}
+            onApplyLevelToAll={applyZoomLevelToAll}
+            onRemove={removeZoomKeyframe}
+            onClose={() => setSelectedZoomIndex(null)}
+          />
+        ) : activeTool === "cursor" ? (
           <CursorPanel
             settings={cursorSettings}
             onChange={setCursorSettings}
@@ -385,6 +440,7 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
           setDuration(d);
           setClipStartS(0);
           setClipEndS(d);
+          setSlices(initialSlices(0, d));
         }}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
@@ -402,14 +458,12 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
           clipStartS={clipStartS}
           clipEndS={clipEndS}
           onTrimVideoClip={trimVideoClip}
-          onChangeZoomKeyframes={changeZoomKeyframes}
-          cutRegions={cutRegions}
-          speedRegions={speedRegions}
-          onAddCut={addCutRegion}
-          onRemoveCut={(id) => setCutRegions((regions) => removeRegion(regions, id))}
-          onAddSpeed={addSpeedRegion}
-          onRemoveSpeed={(id) => setSpeedRegions((regions) => removeRegion(regions, id))}
-          onCycleSpeedRate={cycleSpeedRegionRate}
+          onChangeZoomKeyframes={setZoomKeyframes}
+          slices={slices}
+          onSplitClip={handleSplitClip}
+          onSelectSlice={selectSlice}
+          onSplitZoomKeyframe={handleSplitZoom}
+          onSelectZoomKeyframe={selectZoomKeyframe}
         />
       </div>
     </div>
