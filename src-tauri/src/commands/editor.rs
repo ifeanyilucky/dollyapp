@@ -42,3 +42,14 @@ pub fn reveal_in_finder(bundle_path: String) -> Result<(), String> {
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
+
+/// Deletes a recording bundle. The frontend is expected to have already
+/// confirmed with the user — this performs the delete unconditionally.
+/// `BundleReader::open` first as a sanity check (must actually look like
+/// a `.motionrec` bundle, i.e. contain `meta.json`) so a bad path can't
+/// end up passed to `remove_dir_all` directly.
+#[tauri::command]
+pub fn delete_recording(bundle_path: String) -> Result<(), String> {
+    let reader = BundleReader::open(&bundle_path).map_err(|e| e.to_string())?;
+    std::fs::remove_dir_all(reader.path()).map_err(|e| e.to_string())
+}
