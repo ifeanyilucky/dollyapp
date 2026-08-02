@@ -75,3 +75,48 @@ describe("MotionEngine pan-follows-cursor", () => {
     expect(lastViewport).toBeDefined();
   });
 });
+
+describe("MotionEngine stability under large/janky dt", () => {
+  it("a single huge dt (simulating a dropped-frame hitch) doesn't overshoot past the target", () => {
+    const keyframes: ZoomKeyframe[] = [
+      { startT: 0, endT: 5_000_000, level: 3, center: { x: 960, y: 540 } },
+    ];
+    const engine = new MotionEngine(FRAME, keyframes);
+    // First tick establishes lastT; second tick simulates a huge stall
+    // (e.g. an expensive render or tab switch) before the next frame.
+    engine.transformAt(0);
+    const { viewport } = engine.transformAt(2_000_000); // 2s gap in one step
+
+    // Un-clamped explicit-Euler at this stiffness would overshoot the
+    // target level wildly (springing past 3x and oscillating). With
+    // sub-stepping it should land at or very near the settled target.
+    const level = FRAME.width / viewport.width;
+    expect(level).toBeGreaterThan(0.9);
+    expect(level).toBeLessThanOrEqual(3.05);
+  });
+
+  it("repeated jittery dt (alternating tiny and large steps) never explodes the viewport", () => {
+    const keyframes: ZoomKeyframe[] = [
+      { startT: 0, endT: 5_000_000, level: 2.5, center: { x: 960, y: 540 } },
+    ];
+    const engine = new MotionEngine(FRAME, keyframes);
+    let t = 0;
+    for (let i = 0; i < 50; i++) {
+      // Alternate a normal 16ms frame with an occasional 500ms hitch.
+      t += i % 5 === 0 ? 500_000 : 16_000;
+      const { viewport } = engine.transformAt(t, { x: 960, y: 540 });
+      expect(Number.isFinite(viewport.x)).toBe(true);
+      expect(Number.isFinite(viewport.width)).toBe(true);
+      expect(viewport.width).toBeGreaterThan(0);
+      expect(viewport.height).toBeGreaterThan(0);
+      // A finite, positive, on-frame viewport at every single tick is the
+      // actual regression check — explicit-Euler blowup shows up as
+      // negative/absurd sizes or NaN long before it shows up as "looks
+      // glitchy" to a human.
+      expect(viewport.x).toBeGreaterThanOrEqual(-1e-6);
+      expect(viewport.y).toBeGreaterThanOrEqual(-1e-6);
+      expect(viewport.x + viewport.width).toBeLessThanOrEqual(FRAME.width + 1e-6);
+      expect(viewport.y + viewport.height).toBeLessThanOrEqual(FRAME.height + 1e-6);
+    }
+  });
+});

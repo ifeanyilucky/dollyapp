@@ -40,6 +40,15 @@ export class SceneRenderer {
   private events: CursorEvent[];
   private scaleFactor: number;
   private videoAspect: number;
+  // `shadowBlur` is one of the more expensive things Canvas2D can do —
+  // recomputing a full-size blurred rect every frame was enough to make
+  // rendering janky, which fed directly into spring instability (a slow
+  // frame means a large `dt` on the next `transformAt` call). The content
+  // rect + shadow style only change on a style edit or resize, not every
+  // frame, so the blurred shadow is rendered once into an offscreen
+  // canvas and just blitted (cheap) after that.
+  private shadowLayer: HTMLCanvasElement | null = null;
+  private shadowLayerKey = "";
 
   constructor(opts: SceneRendererOptions) {
     this.scaleFactor = opts.scaleFactor;
@@ -84,18 +93,11 @@ export class SceneRenderer {
     const sw = viewport.width * this.scaleFactor;
     const sh = viewport.height * this.scaleFactor;
 
-    // Shadow pass: a filled rounded rect casts the shadow. Drawn
-    // separately from the clipped video below because CanvasRenderingContext2D
-    // applies shadow to whatever's drawn, and a full-bleed drawImage
-    // would otherwise shadow the entire crop instead of just its edge.
-    ctx.save();
-    ctx.shadowColor = style.shadowColor;
-    ctx.shadowBlur = style.shadowBlur;
-    ctx.shadowOffsetY = style.shadowOffsetY;
-    ctx.fillStyle = "#000";
-    roundedRectPath(ctx, content, style.cornerRadius);
-    ctx.fill();
-    ctx.restore();
+    // Shadow pass: a filled rounded rect casts the shadow, cached (see
+    // the `shadowLayer` field doc comment) since it doesn't change frame
+    // to frame during normal playback.
+    const shadowLayer = this.getShadowLayer(canvas.width, canvas.height, content, style);
+    ctx.drawImage(shadowLayer, 0, 0);
 
     ctx.save();
     roundedRectPath(ctx, content, style.cornerRadius);
@@ -103,6 +105,21 @@ export class SceneRenderer {
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(video, sx, sy, sw, sh, content.x, content.y, content.width, content.height);
     ctx.restore();
+
+    if (style.inset > 0) {
+      const insetRect = {
+        x: content.x + style.inset / 2,
+        y: content.y + style.inset / 2,
+        width: content.width - style.inset,
+        height: content.height - style.inset,
+      };
+      ctx.save();
+      roundedRectPath(ctx, insetRect, Math.max(0, style.cornerRadius - style.inset / 2));
+      ctx.strokeStyle = style.insetColor;
+      ctx.lineWidth = style.inset;
+      ctx.stroke();
+      ctx.restore();
+    }
 
     if (!cursor) return;
 
@@ -128,6 +145,46 @@ export class SceneRenderer {
     }
 
     return { x: (canvasWidth - width) / 2, y: (canvasHeight - height) / 2, width, height };
+  }
+
+  private getShadowLayer(
+    canvasWidth: number,
+    canvasHeight: number,
+    content: Rect,
+    style: StyleSettings,
+  ): HTMLCanvasElement {
+    const key = [
+      canvasWidth,
+      canvasHeight,
+      content.x,
+      content.y,
+      content.width,
+      content.height,
+      style.cornerRadius,
+      style.shadowBlur,
+      style.shadowOffsetY,
+      style.shadowColor,
+    ].join(":");
+
+    if (this.shadowLayer && this.shadowLayerKey === key) return this.shadowLayer;
+
+    const layer = this.shadowLayer ?? document.createElement("canvas");
+    layer.width = canvasWidth;
+    layer.height = canvasHeight;
+    const lctx = layer.getContext("2d");
+    if (lctx) {
+      lctx.clearRect(0, 0, canvasWidth, canvasHeight);
+      lctx.shadowColor = style.shadowColor;
+      lctx.shadowBlur = style.shadowBlur;
+      lctx.shadowOffsetY = style.shadowOffsetY;
+      lctx.fillStyle = "#000";
+      roundedRectPath(lctx, content, style.cornerRadius);
+      lctx.fill();
+    }
+
+    this.shadowLayer = layer;
+    this.shadowLayerKey = key;
+    return layer;
   }
 
   private cursorPositionAt(tUs: number): { x: number; y: number } | null {
