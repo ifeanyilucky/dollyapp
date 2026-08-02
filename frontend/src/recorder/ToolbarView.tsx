@@ -1,3 +1,4 @@
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef } from "react";
 import { closeToolbar, setToolbarHitRect } from "./api";
 import { RecordingControls } from "./RecordingControls";
@@ -81,13 +82,27 @@ export function ToolbarView() {
     };
   }, []);
 
+  // Native `window.confirm()` isn't reliable in this window — it's
+  // undecorated/transparent/always-on-top, and WKWebView's default dialog
+  // handling doesn't consistently attach a visible panel to a window like
+  // that, so the call can silently no-op instead of actually prompting.
+  // `@tauri-apps/plugin-dialog` shows a real native alert independent of
+  // the window's own chrome.
   async function handleDiscard() {
-    if (!window.confirm("Discard this recording? This can't be undone.")) return;
+    const confirmed = await confirm("Discard this recording? This can't be undone.", {
+      title: "Discard recording",
+      kind: "warning",
+    });
+    if (!confirmed) return;
     await discard();
   }
 
   async function handleRestart() {
-    if (!window.confirm("Restart recording? The current progress will be discarded.")) return;
+    const confirmed = await confirm("Restart recording? The current progress will be discarded.", {
+      title: "Restart recording",
+      kind: "warning",
+    });
+    if (!confirmed) return;
     await restart();
   }
 

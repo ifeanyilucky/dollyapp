@@ -5,7 +5,7 @@ version = "0.1.0"
 description = "Automatic cinematic screen recording for macOS"
 authors = ["Dolly contributors"]
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.77.2"
 license = "AGPL-3.0-only"
 repository = "https://github.com/dollyapp/dolly"
 
@@ -28,7 +28,7 @@ uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tauri-plugin-dialog = "2.0.0-rc.8"
+tauri-plugin-dialog = "2.7.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"

@@ -1,4 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { generateZoomKeyframes, splitKeyframeAt, type ZoomKeyframe } from "../motion-engine";
 import { aspectRatioPreset, type AspectRatioId } from "./aspect";
@@ -317,7 +318,11 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   }
 
   async function handleDelete() {
-    if (!window.confirm("Delete this recording? This can't be undone.")) return;
+    const confirmed = await confirm("Delete this recording? This can't be undone.", {
+      title: "Delete recording",
+      kind: "warning",
+    });
+    if (!confirmed) return;
     await deleteRecording(bundlePath);
     onClose();
   }
