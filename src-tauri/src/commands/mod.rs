@@ -9,6 +9,7 @@ mod editor;
 mod export;
 mod permissions;
 mod recorder;
+mod settings;
 mod toolbar;
 mod window_picker;
 
@@ -18,5 +19,6 @@ pub use editor::*;
 pub use export::*;
 pub use permissions::*;
 pub use recorder::*;
+pub use settings::*;
 pub use toolbar::*;
 pub use window_picker::*;
