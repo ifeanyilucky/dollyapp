@@ -24,7 +24,9 @@ import {
   AREA_SELECTED_EVENT,
   listCaptureTargets,
   openAreaSelector,
+  openWindowPicker,
   selectCaptureTarget,
+  WINDOW_SELECTED_EVENT,
   type TargetInfo,
 } from "./targets";
 
@@ -36,6 +38,11 @@ interface AreaSelectedPayload {
   y: number;
   width: number;
   height: number;
+}
+
+interface WindowSelectedPayload {
+  windowId: number;
+  title: string;
 }
 
 /**
@@ -65,6 +72,7 @@ export function SourcePickerBar({
   const [targets, setTargets] = useState<TargetInfo[]>([]);
   const [mode, setMode] = useState<SourceMode>("display");
   const [selectedWindowId, setSelectedWindowId] = useState<number | null>(null);
+  const [pickedWindowTitle, setPickedWindowTitle] = useState<string | null>(null);
   const [areaLabel, setAreaLabel] = useState<string | null>(null);
   const [micEnabled, setMicEnabledState] = useState(false);
   const [micDeniedHint, setMicDeniedHint] = useState(false);
@@ -83,9 +91,26 @@ export function SourcePickerBar({
     };
   }, []);
 
+  useEffect(() => {
+    // The window-picker overlay records the picked window immediately, so
+    // by the time this arrives the toolbar is about to flip to recording
+    // state — but the tab should still show the picked window (title,
+    // active state) if it's observed first.
+    const unlisten = listen<WindowSelectedPayload>(WINDOW_SELECTED_EVENT, (event) => {
+      setMode("window");
+      setSelectedWindowId(event.payload.windowId);
+      setPickedWindowTitle(event.payload.title);
+      setAreaLabel(null);
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
+
   const displays = targets.filter((t) => t.kind === "display");
   const windows = targets.filter((t) => t.kind === "window");
   const selectedWindow = windows.find((w) => w.id === selectedWindowId);
+  const windowTitle = selectedWindow?.title ?? pickedWindowTitle;
 
   async function pickDisplay(target: TargetInfo | null) {
     setMode("display");
@@ -93,16 +118,10 @@ export function SourcePickerBar({
     await selectCaptureTarget(target);
   }
 
-  async function pickWindow(target: TargetInfo) {
-    setMode("window");
-    setSelectedWindowId(target.id);
-    setAreaLabel(null);
-    await selectCaptureTarget(target);
-  }
-
   async function reset() {
     setMode("display");
     setSelectedWindowId(null);
+    setPickedWindowTitle(null);
     setAreaLabel(null);
     if (micEnabled) {
       setMicEnabledState(false);
@@ -172,36 +191,19 @@ export function SourcePickerBar({
           />
         )}
 
-        {windows.length > 1 ? (
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger asChild>
-              <TabButton
-                icon={AppWindowMac}
-                label="Window"
-                sublabel={mode === "window" ? selectedWindow?.title : undefined}
-                active={mode === "window"}
-                disabled={disabled}
-              />
-            </DropdownMenu.Trigger>
-            <PickerMenu>
-              {windows.map((w) => (
-                <DropdownMenu.Item key={w.id} className="picker-menu-item" onSelect={() => void pickWindow(w)}>
-                  {w.title || `Window ${w.id}`}
-                </DropdownMenu.Item>
-              ))}
-            </PickerMenu>
-          </DropdownMenu.Root>
-        ) : (
-          <TabButton
-            icon={AppWindowMac}
-            label="Window"
-            sublabel={mode === "window" ? selectedWindow?.title : undefined}
-            active={mode === "window"}
-            disabled={disabled || windows.length === 0}
-            onClick={windows.length === 1 ? () => void pickWindow(windows[0]) : undefined}
-            title={windows.length === 0 ? "No open windows" : undefined}
-          />
-        )}
+        {/* The "Window" picker doesn't list windows in a dropdown — it
+            opens a full-screen overlay where hovering a window highlights
+            it (purple tint + app name + size) and offers to record it
+            directly (see `openWindowPicker` / `WindowPickerView`). */}
+        <TabButton
+          icon={AppWindowMac}
+          label="Window"
+          sublabel={mode === "window" ? (windowTitle ?? undefined) : undefined}
+          active={mode === "window"}
+          disabled={disabled}
+          onClick={() => void openWindowPicker()}
+          title="Hover over a window to record it"
+        />
 
         <TabButton
           icon={Crop}

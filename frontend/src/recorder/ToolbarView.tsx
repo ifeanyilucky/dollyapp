@@ -16,7 +16,7 @@ import { useRecordingState } from "./useRecordingState";
  *
  * The window itself (see `toolbar::show`) is taller than the pill below —
  * top-aligned here, on purpose, so the extra space stays invisible until
- * the Display/Window dropdowns need room to render into it.
+ * the Display dropdown needs room to render into it.
  */
 export function ToolbarView() {
   const { isRecording, isPaused, busy, error, start, stop, togglePause } = useRecordingState();

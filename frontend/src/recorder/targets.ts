@@ -58,3 +58,52 @@ export function confirmAreaSelection(area: CropArea): Promise<void> {
 export function cancelAreaSelection(): Promise<void> {
   return invoke("cancel_area_selection");
 }
+
+/** Mirrors `src-tauri/src/capture::WindowHitInfo` — a capturable window
+ * under the cursor, in the same global point space as `cursor.json`. */
+export interface WindowInfo {
+  windowId: number;
+  /** The owning app's name, e.g. "Google Chrome". */
+  ownerName: string;
+  title: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Payload of the `window-selected` event, emitted once the window picker
+ * picks a target (and recording starts) — see
+ * `src-tauri/src/commands/window_picker.rs`. */
+export const WINDOW_SELECTED_EVENT = "window-selected";
+
+/** Opens the full-screen hover-to-pick overlay for the "Window" picker
+ * (see `open_window_picker`). Resolves once the window is open — the
+ * actual pick arrives later, asynchronously, via `pickWindowAndRecord` or
+ * `cancelWindowPicker`. */
+export function openWindowPicker(): Promise<void> {
+  return invoke("open_window_picker");
+}
+
+/** Hit-tests the on-screen windows at a global display point. Returns
+ * `null` when the cursor isn't over a capturable window. */
+export function windowInfoAtPoint(x: number, y: number): Promise<WindowInfo | null> {
+  return invoke("window_info_at_point", { x, y });
+}
+
+/** `windowInfoAtPoint` at the cursor's current location — seeds the
+ * picker overlay with the window under the cursor the moment it opens. */
+export function windowInfoAtCursor(): Promise<WindowInfo | null> {
+  return invoke("window_info_at_cursor");
+}
+
+/** Called from *within* the window-picker overlay only. Selects the
+ * window as the capture target, closes the overlay, and starts recording. */
+export function pickWindowAndRecord(windowId: number): Promise<void> {
+  return invoke("pick_window_and_record", { windowId });
+}
+
+/** Called from *within* the window-picker overlay only. */
+export function cancelWindowPicker(): Promise<void> {
+  return invoke("cancel_window_picker");
+}
