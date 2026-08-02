@@ -2,7 +2,6 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { listen } from "@tauri-apps/api/event";
 import {
   AppWindowMac,
-  ChevronDown,
   Circle,
   Crop,
   Mic,
@@ -17,6 +16,7 @@ import {
 } from "lucide-react";
 import { forwardRef, useEffect, useState } from "react";
 import { getMicrophoneStatus, openMicrophoneSettings, requestMicrophonePermission } from "../permissions/api";
+import { openSettingsWindow } from "../settings/api";
 import { setMicEnabled } from "./api";
 import {
   AREA_SELECTED_EVENT,
@@ -243,12 +243,12 @@ export function SourcePickerBar({
 
         <button
           type="button"
-          disabled
-          className="flex h-8 items-center gap-1 rounded-lg px-2 text-neutral-600"
-          title="Settings — not built yet"
+          onClick={() => void openSettingsWindow()}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+          aria-label="Settings"
+          title="Settings"
         >
           <Settings className="h-4 w-4" />
-          <ChevronDown className="h-3.5 w-3.5" />
         </button>
 
         <div className="mx-1 h-8 w-px bg-neutral-800" />
