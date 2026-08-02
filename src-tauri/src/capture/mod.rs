@@ -24,7 +24,7 @@ mod targets;
 pub use macos::{CapturedFrame, FrameGrabber};
 #[cfg(target_os = "macos")]
 pub use targets::{
-    crop_area_for_target, display_bounds, list_targets, main_display, resolve_target, scale_factor,
-    target_origin, window_at_cursor, window_at_point, CropArea, TargetInfo, TargetKind,
-    WindowHitInfo,
+    crop_area_for_target, cursor_position, display_bounds, list_targets, main_display,
+    resolve_target, scale_factor, target_origin, window_at_cursor, window_at_point, CropArea,
+    TargetInfo, TargetKind, WindowHitInfo,
 };

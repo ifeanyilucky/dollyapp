@@ -338,16 +338,23 @@ pub fn window_at_point(x: f64, y: f64) -> Option<WindowHitInfo> {
 /// overlay with the window under the cursor the moment it opens, without
 /// waiting for the first `mousemove`.
 pub fn window_at_cursor() -> Option<WindowHitInfo> {
-    let Ok(source) = core_graphics::event_source::CGEventSource::new(
+    let (x, y) = cursor_position()?;
+    window_at_point(x, y)
+}
+
+/// The cursor's current position in the same global point space as
+/// `kCGWindowBounds` (what `window_at_point`'s hit-testing compares
+/// against) — used directly by `window_at_cursor` above, and by the
+/// toolbar's click-through polling (`toolbar::spawn_hit_test_loop`),
+/// which needs the raw position rather than a window hit-test result.
+pub fn cursor_position() -> Option<(f64, f64)> {
+    let source = core_graphics::event_source::CGEventSource::new(
         core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
-    ) else {
-        return None;
-    };
-    let Ok(event) = core_graphics::event::CGEvent::new(source) else {
-        return None;
-    };
+    )
+    .ok()?;
+    let event = core_graphics::event::CGEvent::new(source).ok()?;
     let loc = event.location();
-    window_at_point(loc.x, loc.y)
+    Some((loc.x, loc.y))
 }
 
 unsafe fn dict_number(dict: CfDictionaryRef, key: CfStringRef) -> Option<i32> {

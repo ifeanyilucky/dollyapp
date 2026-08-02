@@ -56,8 +56,10 @@ pub fn run() {
             commands::enter_toolbar_mode,
             commands::return_to_toolbar,
             commands::close_toolbar,
+            commands::set_toolbar_hit_rect,
         ])
         .manage(recorder::RecorderState::default())
+        .manage(toolbar::ToolbarHitRect::default())
         .setup(|app| {
             use tauri::Manager;
 
