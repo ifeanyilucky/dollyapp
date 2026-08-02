@@ -189,7 +189,11 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
         has_mic_audio,
         fps: FPS,
     })?;
-    tracing::info!("wrote {} frames to {}", outcome.frame_count, active.bundle_dir.display());
+    tracing::info!(
+        "wrote {} frames to {}",
+        outcome.frame_count,
+        active.bundle_dir.display()
+    );
 
     Ok(active.bundle_dir)
 }
@@ -261,10 +265,15 @@ fn run_capture(
         return Err(e);
     }
 
-    let writer = writer.ok_or_else(|| anyhow!("recording stopped before any frame was captured"))?;
+    let writer =
+        writer.ok_or_else(|| anyhow!("recording stopped before any frame was captured"))?;
     writer.finish()?;
 
-    Ok(CaptureOutcome { frame_count, width: size.0, height: size.1 })
+    Ok(CaptureOutcome {
+        frame_count,
+        width: size.0,
+        height: size.1,
+    })
 }
 
 fn new_bundle_dir(app: &AppHandle) -> Result<PathBuf> {

@@ -7,14 +7,14 @@ use anyhow::{anyhow, Result};
 // the `objc2-avf`/`block2-avf` aliases in permissions/macos.rs — the
 // plain `objc2` dependency elsewhere in this crate is 0.5, a distinct
 // (incompatible) `Retained`/`Message`.
-use objc2_avf::rc::Retained;
-use objc2_avf::runtime::AnyObject;
-use objc2_avf::Message as _;
 use objc2_av_foundation::{
     AVAssetWriter, AVAssetWriterInput, AVAssetWriterInputPixelBufferAdaptor,
     AVFileTypeQuickTimeMovie, AVMediaTypeVideo, AVVideoCodecKey, AVVideoCodecTypeH264,
     AVVideoHeightKey, AVVideoWidthKey,
 };
+use objc2_avf::rc::Retained;
+use objc2_avf::runtime::AnyObject;
+use objc2_avf::Message as _;
 use objc2_core_foundation::CFRetained;
 use objc2_core_media::{CMTime, CMTimeFlags};
 use objc2_core_video::{kCVPixelFormatType_32BGRA, kCVReturnSuccess, CVPixelBuffer};
@@ -42,8 +42,8 @@ impl MovWriter {
 
         let url = NSURL::from_file_path(path)
             .ok_or_else(|| anyhow!("invalid output path: {}", path.display()))?;
-        let file_type =
-            unsafe { AVFileTypeQuickTimeMovie }.ok_or_else(|| anyhow!("AVFileTypeQuickTimeMovie unavailable"))?;
+        let file_type = unsafe { AVFileTypeQuickTimeMovie }
+            .ok_or_else(|| anyhow!("AVFileTypeQuickTimeMovie unavailable"))?;
 
         let writer = unsafe { AVAssetWriter::assetWriterWithURL_fileType_error(&url, file_type) }
             .map_err(|e| anyhow!("failed to create AVAssetWriter: {e:?}"))?;
@@ -60,7 +60,9 @@ impl MovWriter {
         unsafe { input.setExpectsMediaDataInRealTime(true) };
 
         if !unsafe { writer.canAddInput(&input) } {
-            return Err(anyhow!("AVAssetWriter cannot accept a video input with these settings"));
+            return Err(anyhow!(
+                "AVAssetWriter cannot accept a video input with these settings"
+            ));
         }
         unsafe { writer.addInput(&input) };
 
@@ -73,7 +75,12 @@ impl MovWriter {
             return Err(anyhow!("AVAssetWriter failed to start writing: {err:?}"));
         }
 
-        Ok(Self { writer, input, adaptor, session_started: false })
+        Ok(Self {
+            writer,
+            input,
+            adaptor,
+            session_started: false,
+        })
     }
 
     /// `frame.t` (microseconds since the recording's shared `Clock` epoch —
@@ -94,7 +101,10 @@ impl MovWriter {
 
         let pixel_buffer = pixel_buffer_from_frame(frame)?;
         let pts = cm_time_us(frame.t);
-        if !unsafe { self.adaptor.appendPixelBuffer_withPresentationTime(&pixel_buffer, pts) } {
+        if !unsafe {
+            self.adaptor
+                .appendPixelBuffer_withPresentationTime(&pixel_buffer, pts)
+        } {
             let err = unsafe { self.writer.error() };
             return Err(anyhow!("failed to append frame at t={}: {err:?}", frame.t));
         }
@@ -121,7 +131,12 @@ impl MovWriter {
 /// unit `frame.t` and `cursor.json` timestamps already use, so this is a
 /// direct 1:1 mapping, not a rescale.
 fn cm_time_us(t_us: u64) -> CMTime {
-    CMTime { value: t_us as i64, timescale: 1_000_000, flags: CMTimeFlags::Valid, epoch: 0 }
+    CMTime {
+        value: t_us as i64,
+        timescale: 1_000_000,
+        flags: CMTimeFlags::Valid,
+        epoch: 0,
+    }
 }
 
 fn video_output_settings(
@@ -130,8 +145,8 @@ fn video_output_settings(
 ) -> Result<Retained<NSDictionary<NSString, AnyObject>>> {
     let codec_key =
         unsafe { AVVideoCodecKey }.ok_or_else(|| anyhow!("AVVideoCodecKey unavailable"))?;
-    let codec_h264 =
-        unsafe { AVVideoCodecTypeH264 }.ok_or_else(|| anyhow!("AVVideoCodecTypeH264 unavailable"))?;
+    let codec_h264 = unsafe { AVVideoCodecTypeH264 }
+        .ok_or_else(|| anyhow!("AVVideoCodecTypeH264 unavailable"))?;
     let width_key =
         unsafe { AVVideoWidthKey }.ok_or_else(|| anyhow!("AVVideoWidthKey unavailable"))?;
     let height_key =
@@ -200,12 +215,16 @@ fn pixel_buffer_from_frame(frame: &CapturedFrame) -> Result<CFRetained<CVPixelBu
         return Err(anyhow!("CVPixelBufferCreateWithBytes failed: {status}"));
     }
 
-    let ptr = NonNull::new(pixel_buffer_ptr)
-        .ok_or_else(|| anyhow!("CVPixelBufferCreateWithBytes succeeded but returned a null buffer"))?;
+    let ptr = NonNull::new(pixel_buffer_ptr).ok_or_else(|| {
+        anyhow!("CVPixelBufferCreateWithBytes succeeded but returned a null buffer")
+    })?;
     Ok(unsafe { CFRetained::from_raw(ptr) })
 }
 
-unsafe extern "C-unwind" fn release_bgra_bytes(release_ref_con: *mut c_void, _base_address: *const c_void) {
+unsafe extern "C-unwind" fn release_bgra_bytes(
+    release_ref_con: *mut c_void,
+    _base_address: *const c_void,
+) {
     if !release_ref_con.is_null() {
         drop(unsafe { Box::from_raw(release_ref_con as *mut Vec<u8>) });
     }
