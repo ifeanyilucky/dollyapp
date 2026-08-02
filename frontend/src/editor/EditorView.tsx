@@ -74,6 +74,18 @@ export function EditorView({
   const [activeTool, setActiveTool] = useState<ToolId>("style");
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+  // Layout visibility — the top bar's eye-icon dropdown. Plain UI state,
+  // not part of `EditorDocument`: it's not undoable and isn't exported.
+  // `showSidebar`/`showTimeline` are independent, persisted-for-the-session
+  // toggles (both default visible); `previewMode` ("Enter preview mode" in
+  // the same dropdown — unrelated to `previewTimeS` above, which is the
+  // *timeline hover* preview) is a one-shot override that forces both
+  // hidden without touching their underlying values, so exiting it
+  // restores whatever they were set to. See the render below, which ANDs
+  // `!previewMode` into both.
+  const [showSidebar, setShowSidebar] = useState(true);
+  const [showTimeline, setShowTimeline] = useState(true);
+  const [previewMode, setPreviewMode] = useState(false);
 
   // The undoable document — style, cursor overlay settings, output aspect,
   // zoom keyframes, clip trim, and slices. See the module doc comment and
@@ -349,9 +361,16 @@ export function EditorView({
   // history the top bar's Undo/Redo buttons drive. Ignored while a text-
   // like input has focus (none exist in these panels today, but this is
   // cheap insurance) and while exporting, matching the top bar buttons'
-  // own `disabled` state there.
+  // own `disabled` state there. Escape exits preview mode (the eye
+  // dropdown's "Enter preview mode") — the top bar stays visible and
+  // reachable while previewing, so reopening that same dropdown always
+  // works too, but Escape is the faster way out.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        if (previewMode) setPreviewMode(false);
+        return;
+      }
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
@@ -366,7 +385,7 @@ export function EditorView({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUndo, canRedo, undoDoc, redoDoc, exporting]);
+  }, [canUndo, canRedo, undoDoc, redoDoc, exporting, previewMode]);
 
   function togglePlay() {
     const video = videoRef.current;
@@ -597,8 +616,12 @@ export function EditorView({
         title={bundlePath.split("/").pop() ?? bundlePath}
         aspectRatioId={aspectRatioId}
         onChangeAspectRatio={(id) => setDoc((d) => ({ ...d, aspectRatioId: id }))}
-        showCursor={showCursor}
-        onToggleCursor={() => setDoc((d) => ({ ...d, showCursor: !d.showCursor }))}
+        showSidebar={showSidebar}
+        onToggleSidebar={() => setShowSidebar((v) => !v)}
+        showTimeline={showTimeline}
+        onToggleTimeline={() => setShowTimeline((v) => !v)}
+        previewMode={previewMode}
+        onTogglePreviewMode={() => setPreviewMode((v) => !v)}
         playbackRate={playbackRate}
         onCyclePlaybackRate={cyclePlaybackRate}
         onExport={() => void handleExport()}
@@ -621,46 +644,56 @@ export function EditorView({
        * just gets silently clipped by `overflow-hidden` instead. */}
       <div className="flex min-h-0 flex-1 items-stretch justify-center gap-4 overflow-hidden p-6">
         <div ref={canvasWrapperRef} className="flex min-h-0 min-w-0 flex-1 items-center justify-center">
+          {/* Click to play/pause — the only way to control playback while
+           * the timeline (which normally owns the play button) is hidden,
+           * whether that's preview mode or just "Show editor timeline"
+           * unchecked. Harmless as a global affordance either way. */}
           <canvas
             ref={canvasRef}
             width={canvasWidth}
             height={canvasHeight}
-            className="max-h-full max-w-full rounded-lg"
+            onClick={togglePlay}
+            className="max-h-full max-w-full cursor-pointer rounded-lg"
+            title={isPlaying ? "Pause" : "Play"}
           />
         </div>
-        <IconRail active={selectedSlice || selectedZoomKeyframe ? null : activeTool} onSelect={setActiveTool} />
-        {selectedSlice ? (
-          <SliceEditorPanel
-            slice={selectedSlice}
-            onChange={updateSlice}
-            onApplySpeedToAll={applySpeedToAllSlices}
-            onRemove={removeSlice}
-            canRemove={slices.filter((s) => !s.removed).length > 1}
-            onClose={() => setSelectedSliceId(null)}
-          />
-        ) : selectedZoomKeyframe ? (
-          <ZoomEditorPanel
-            keyframe={selectedZoomKeyframe}
-            onChange={updateZoomKeyframeLive}
-            onCommit={commitDoc}
-            onApplyLevelToAll={applyZoomLevelToAll}
-            onRemove={removeZoomKeyframe}
-            onClose={() => setSelectedZoomIndex(null)}
-          />
-        ) : activeTool === "cursor" ? (
-          <CursorPanel
-            settings={cursorSettings}
-            onChange={(next) => setDocTransient((d) => ({ ...d, cursorSettings: next }))}
-            onCommit={commitDoc}
-            showCursor={showCursor}
-            onToggleShowCursor={() => setDoc((d) => ({ ...d, showCursor: !d.showCursor }))}
-          />
-        ) : (
-          <StylePanel
-            style={style}
-            onChange={(next) => setDocTransient((d) => ({ ...d, style: next }))}
-            onCommit={commitDoc}
-          />
+        {!previewMode && showSidebar && (
+          <>
+            <IconRail active={selectedSlice || selectedZoomKeyframe ? null : activeTool} onSelect={setActiveTool} />
+            {selectedSlice ? (
+              <SliceEditorPanel
+                slice={selectedSlice}
+                onChange={updateSlice}
+                onApplySpeedToAll={applySpeedToAllSlices}
+                onRemove={removeSlice}
+                canRemove={slices.filter((s) => !s.removed).length > 1}
+                onClose={() => setSelectedSliceId(null)}
+              />
+            ) : selectedZoomKeyframe ? (
+              <ZoomEditorPanel
+                keyframe={selectedZoomKeyframe}
+                onChange={updateZoomKeyframeLive}
+                onCommit={commitDoc}
+                onApplyLevelToAll={applyZoomLevelToAll}
+                onRemove={removeZoomKeyframe}
+                onClose={() => setSelectedZoomIndex(null)}
+              />
+            ) : activeTool === "cursor" ? (
+              <CursorPanel
+                settings={cursorSettings}
+                onChange={(next) => setDocTransient((d) => ({ ...d, cursorSettings: next }))}
+                onCommit={commitDoc}
+                showCursor={showCursor}
+                onToggleShowCursor={() => setDoc((d) => ({ ...d, showCursor: !d.showCursor }))}
+              />
+            ) : (
+              <StylePanel
+                style={style}
+                onChange={(next) => setDocTransient((d) => ({ ...d, style: next }))}
+                onCommit={commitDoc}
+              />
+            )}
+          </>
         )}
       </div>
 
@@ -681,28 +714,30 @@ export function EditorView({
         onPause={() => setIsPlaying(false)}
       />
 
-      <div className="px-6 pb-6">
-        <Timeline
-          duration={duration}
-          currentTime={currentTime}
-          isPlaying={isPlaying}
-          onTogglePlay={togglePlay}
-          onSeek={handleSeek}
-          onPreviewSeek={handlePreviewSeek}
-          zoomKeyframes={zoomKeyframes}
-          videoStartUs={loaded.meta.videoStartUs}
-          clipStartS={clipStartS}
-          clipEndS={clipEndS}
-          onTrimVideoClip={trimVideoClipLive}
-          onChangeZoomKeyframes={updateAllZoomKeyframesLive}
-          onCommitChange={commitDoc}
-          slices={slices}
-          onSplitClip={handleSplitClip}
-          onSelectSlice={selectSlice}
-          onSplitZoomKeyframe={handleSplitZoom}
-          onSelectZoomKeyframe={selectZoomKeyframe}
-        />
-      </div>
+      {!previewMode && showTimeline && (
+        <div className="px-6 pb-6">
+          <Timeline
+            duration={duration}
+            currentTime={currentTime}
+            isPlaying={isPlaying}
+            onTogglePlay={togglePlay}
+            onSeek={handleSeek}
+            onPreviewSeek={handlePreviewSeek}
+            zoomKeyframes={zoomKeyframes}
+            videoStartUs={loaded.meta.videoStartUs}
+            clipStartS={clipStartS}
+            clipEndS={clipEndS}
+            onTrimVideoClip={trimVideoClipLive}
+            onChangeZoomKeyframes={updateAllZoomKeyframesLive}
+            onCommitChange={commitDoc}
+            slices={slices}
+            onSplitClip={handleSplitClip}
+            onSelectSlice={selectSlice}
+            onSplitZoomKeyframe={handleSplitZoom}
+            onSelectZoomKeyframe={selectZoomKeyframe}
+          />
+        </div>
+      )}
     </div>
   );
 }

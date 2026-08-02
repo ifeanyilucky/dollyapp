@@ -1,15 +1,17 @@
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Crop,
   Eye,
-  EyeOff,
   Folder,
   FolderClock,
   Gauge,
   Loader,
+  Maximize2,
+  Minimize2,
   Redo2,
   Shapes,
   Sparkles,
@@ -27,18 +29,23 @@ const SPEED_STEPS = [1, 1.5, 2, 0.5];
  * Top toolbar. Real actions: export (renders the movie with every applied
  * setting baked in — zoom keyframes, clip trim, slices, styling, cursor
  * overlay, aspect ratio — via a save dialog), reveal-in-Finder, delete
- * (confirms first), cursor-overlay toggle, playback-speed cycling, output
- * aspect ratio (PRD §9, "Horizontal and vertical output"), and undo/redo
- * (also ⌘Z/⇧⌘Z — see `EditorView`'s history, `history.ts`). Presets is
- * inert — there's no preset library yet. Crop / Mask are separate, larger
- * features not covered here.
+ * (confirms first), the view-options dropdown (sidebar/timeline visibility,
+ * preview mode — see below), playback-speed cycling, output aspect ratio
+ * (PRD §9, "Horizontal and vertical output"), and undo/redo (also ⌘Z/⇧⌘Z —
+ * see `EditorView`'s history, `history.ts`). Presets is inert — there's no
+ * preset library yet. Crop / Mask are separate, larger features not
+ * covered here.
  */
 export function TopBar({
   title,
   aspectRatioId,
   onChangeAspectRatio,
-  showCursor,
-  onToggleCursor,
+  showSidebar,
+  onToggleSidebar,
+  showTimeline,
+  onToggleTimeline,
+  previewMode,
+  onTogglePreviewMode,
   playbackRate,
   onCyclePlaybackRate,
   onExport,
@@ -56,8 +63,17 @@ export function TopBar({
   title: string;
   aspectRatioId: AspectRatioId;
   onChangeAspectRatio: (id: AspectRatioId) => void;
-  showCursor: boolean;
-  onToggleCursor: () => void;
+  /** The view-options dropdown (the eye icon) — independent visibility for
+   * the right-hand tool sidebar and the bottom timeline, plus a one-shot
+   * "preview mode" that forces both hidden regardless of their own state
+   * (see `EditorView`, which is the source of truth for all three and
+   * treats `previewMode` as an override, not a third persisted setting). */
+  showSidebar: boolean;
+  onToggleSidebar: () => void;
+  showTimeline: boolean;
+  onToggleTimeline: () => void;
+  previewMode: boolean;
+  onTogglePreviewMode: () => void;
   playbackRate: number;
   onCyclePlaybackRate: () => void;
   onExport: () => void;
@@ -186,17 +202,55 @@ export function TopBar({
           Presets
         </button>
 
-        <button
-          type="button"
-          onClick={onToggleCursor}
-          className={`flex h-7 w-7 items-center justify-center rounded-md ${
-            showCursor ? "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200" : "text-indigo-400"
-          }`}
-          aria-label={showCursor ? "Hide cursor overlay" : "Show cursor overlay"}
-          title={showCursor ? "Hide cursor overlay" : "Show cursor overlay"}
-        >
-          {showCursor ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-        </button>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <button
+              type="button"
+              className={`flex h-7 w-7 items-center justify-center rounded-md ${
+                previewMode ? "text-indigo-400" : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
+              }`}
+              aria-label="View options"
+              title="View options"
+            >
+              <Eye className="h-4 w-4" />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              sideOffset={6}
+              align="end"
+              className="z-50 min-w-52 rounded-lg border border-neutral-800 bg-neutral-900 p-1 text-neutral-200 shadow-2xl [&_.view-item]:flex [&_.view-item]:cursor-pointer [&_.view-item]:items-center [&_.view-item]:gap-2 [&_.view-item]:rounded-md [&_.view-item]:py-1.5 [&_.view-item]:pl-7 [&_.view-item]:pr-2.5 [&_.view-item]:text-[12px] [&_.view-item]:outline-none [&_.view-item[data-highlighted]]:bg-neutral-800"
+            >
+              <DropdownMenu.CheckboxItem
+                className="view-item relative"
+                checked={showSidebar}
+                onCheckedChange={onToggleSidebar}
+              >
+                <DropdownMenu.ItemIndicator className="absolute left-2 flex items-center">
+                  <Check className="h-3.5 w-3.5 text-indigo-400" />
+                </DropdownMenu.ItemIndicator>
+                Show editor sidebar
+              </DropdownMenu.CheckboxItem>
+              <DropdownMenu.CheckboxItem
+                className="view-item relative"
+                checked={showTimeline}
+                onCheckedChange={onToggleTimeline}
+              >
+                <DropdownMenu.ItemIndicator className="absolute left-2 flex items-center">
+                  <Check className="h-3.5 w-3.5 text-indigo-400" />
+                </DropdownMenu.ItemIndicator>
+                Show editor timeline
+              </DropdownMenu.CheckboxItem>
+
+              <DropdownMenu.Separator className="my-1 h-px bg-neutral-800" />
+
+              <DropdownMenu.Item className="view-item !pl-2.5" onSelect={onTogglePreviewMode}>
+                {previewMode ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+                {previewMode ? "Exit preview mode" : "Enter preview mode"}
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
         <button
           type="button"
           onClick={onCyclePlaybackRate}
