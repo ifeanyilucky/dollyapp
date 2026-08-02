@@ -61,6 +61,8 @@ mod tests {
                 width_px: 2560,
                 height_px: 1440,
                 scale_factor: 2.0,
+                origin_x: 0.0,
+                origin_y: 0.0,
             },
             duration_us: 30_000_000,
             has_webcam: false,

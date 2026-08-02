@@ -52,8 +52,16 @@ pub struct FrameGrabber {
 impl FrameGrabber {
     /// `target`: `None` captures the main display (the sync-spike binary's
     /// use case); the real recorder always passes an explicit target,
-    /// resolved from the picker via `capture::resolve_target`.
-    pub fn new(clock: Clock, fps: u32, target: Option<scap::Target>) -> Result<Self> {
+    /// resolved from the picker via `capture::resolve_target`. `crop_area`
+    /// restricts capture to a sub-rectangle of `target` (PRD §9's "region"
+    /// picker) — in `target`'s own point space, i.e. `(0,0)` is always
+    /// `target`'s own top-left, not the global desktop origin.
+    pub fn new(
+        clock: Clock,
+        fps: u32,
+        target: Option<scap::Target>,
+        crop_area: Option<scap::capturer::Area>,
+    ) -> Result<Self> {
         if !scap::has_permission() {
             // The caller is expected to have already walked the user
             // through the pre-prompt explanation screen (ARCHITECTURE.md,

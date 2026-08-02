@@ -48,7 +48,7 @@ fn main() -> anyhow::Result<()> {
 
     let cursor_recorder = CursorRecorder::start(clock);
 
-    let mut grabber = FrameGrabber::new(clock, FPS, None)?;
+    let mut grabber = FrameGrabber::new(clock, FPS, None, None)?;
     let mut frame_index: Vec<(u64, u32)> = Vec::new(); // (timestamp_us, frame_number)
     let mut frame_number = 0u32;
 
@@ -80,6 +80,8 @@ fn main() -> anyhow::Result<()> {
             width_px: frame_index.len() as u32, // placeholder, see above
             height_px: 0,
             scale_factor: 1.0,
+            origin_x: 0.0,
+            origin_y: 0.0,
         },
         duration_us: clock.now_us(),
         has_webcam: false,

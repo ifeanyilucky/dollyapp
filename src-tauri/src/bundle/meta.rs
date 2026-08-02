@@ -38,6 +38,16 @@ pub struct DisplayInfo {
     /// `cursor.json` are in the same point space as this display, not
     /// pixels — multiply by this factor to map onto `screen.mov` pixels.
     pub scale_factor: f64,
+    /// Top-left of the captured content (window, cropped area, or display),
+    /// in the *global* point space `cursor.json` samples are already in
+    /// (same coordinate system `CGEvent::location()` reports — see
+    /// `cursor::macos`). Cursor samples are never re-anchored on write, so
+    /// consumers must subtract this before mapping a sample onto video
+    /// pixel coordinates: `videoX = (cursor.x - originX) * scaleFactor`.
+    /// `(0, 0)` for a full main-display recording, since that display's
+    /// own origin already *is* the global origin.
+    pub origin_x: f64,
+    pub origin_y: f64,
 }
 
 impl RecordingMeta {
