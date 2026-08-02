@@ -10,9 +10,9 @@ import { useRecordingState } from "./useRecordingState";
  * displays/windows. System audio isn't built yet either (see
  * `src-tauri/src/recorder`'s doc comment) — `MicToggle` is mic-only.
  */
-export function RecorderView() {
-  const { isRecording, isPaused, busy, error, lastRecordingPath, start, stop, togglePause } =
-    useRecordingState();
+export function RecorderView({ onFinished }: { onFinished: (bundlePath: string) => void }) {
+  const { isRecording, isPaused, busy, error, start, stop, togglePause } =
+    useRecordingState(onFinished);
 
   return (
     <main className="flex h-screen w-screen flex-col items-center justify-center gap-4 bg-neutral-950 text-neutral-300">
@@ -49,12 +49,6 @@ export function RecorderView() {
       </p>
 
       {error && <p className="max-w-sm text-center text-xs text-red-400">{error}</p>}
-
-      {!isRecording && lastRecordingPath && (
-        <p className="max-w-sm text-center text-xs text-neutral-500">
-          Saved to <span className="text-neutral-400">{lastRecordingPath}</span>
-        </p>
-      )}
     </main>
   );
 }

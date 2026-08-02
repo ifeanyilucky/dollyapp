@@ -16,7 +16,7 @@ import {
  * `recording-state-changed` rather than only tracking its own button
  * clicks.
  */
-export function useRecordingState() {
+export function useRecordingState(onFinished?: (bundlePath: string) => void) {
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -53,12 +53,13 @@ export function useRecordingState() {
     try {
       const path = await stopRecording();
       setLastRecordingPath(path);
+      onFinished?.(path);
     } catch (e) {
       setError(String(e));
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [onFinished]);
 
   const togglePause = useCallback(async () => {
     setBusy(true);
