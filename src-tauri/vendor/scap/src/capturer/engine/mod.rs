@@ -125,6 +125,20 @@ impl Engine {
         get_output_frame_size(&self.options)
     }
 
+    /// Whether the capture stream has reported an error since it started.
+    /// Only meaningful once capture has started; stays false on platforms
+    /// without a stream error handler.
+    pub fn has_error(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            self.error_flag.load(std::sync::atomic::Ordering::Relaxed)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    }
+
     pub fn process_channel_item(&self, data: ChannelItem) -> Option<Frame> {
         #[cfg(target_os = "macos")]
         {

@@ -1,21 +1,20 @@
-# Dolly patch
+# Patches vs. crates.io scap 0.0.8
 
-Vendored from `scap` 0.0.8 (crates.io, MIT license) with one fix:
-`src/targets/mac/mod.rs`'s `get_scale_factor`/`get_target_dimensions` used
-`[NSApp windowWithWindowNumber:]` to resolve a `Target::Window`, which only
-finds windows owned by the calling process. For any real capture target
-(always a different app) that returns `nil`, which silently produced a 0×0
-crop size and a 0.0 scale factor — and since `capturer::engine::mac`
-multiplies those together for the stream's output frame size, window
-capture collapsed to a 0×0 request that ScreenCaptureKit falls back to
-"capture everything" for, instead of erroring.
+Both patches live in the local tree at `src-tauri/vendor/scap` and are wired
+in via `[patch.crates-io]` in `src-tauri/Cargo.toml`.
 
-Fixed to source both values from data that isn't scoped to the calling
-process — see the "Dolly patch" comment block in that file for the full
-explanation. No other files were changed.
+## Window-target dimension/scale-factor lookup
 
-Wired in via `[patch.crates-io]` in `src-tauri/Cargo.toml` rather than
-forking on GitHub, since it's a small, self-contained fix pending upstream.
-Safe to drop once a released `scap` version fixes this (tracked upstream:
-https://github.com/helmerapp/scap — search for window target dimensions /
-scale factor bugs before assuming a newer release has it fixed).
+scap 0.0.8's window-target lookup is broken for any window not owned by this
+process — silently falling back to recording the whole display. Patched in
+`src/targets/mac/mod.rs`.
+
+## Unbounded frame blocking
+
+`Capturer::get_next_frame` blocks forever in the frame channel, so a stream
+that ScreenCaptureKit silently stalls (no frames, no error callback) parks
+the capture thread forever. Added `Capturer::recv_timeout` (bounded wait
+that also surfaces the stream error flag) and `Engine::has_error`; the app's
+`capture::FrameGrabber::run_while` polls with them plus a stall watchdog so
+`recorder::stop` can never hang. Changes in `src/capturer/mod.rs` and
+`src/capturer/engine/mod.rs`.

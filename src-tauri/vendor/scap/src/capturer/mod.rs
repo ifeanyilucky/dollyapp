@@ -149,6 +149,29 @@ impl Capturer {
         }
     }
 
+    /// Get the next captured frame, waiting at most `timeout` for one to
+    /// arrive. Unlike [`Capturer::get_next_frame`] this can never block
+    /// forever, so callers can keep responding to their own stop signals
+    /// even when a stream is alive but delivering nothing (ScreenCaptureKit
+    /// can stall a stream without dropping it or reporting an error — see
+    /// Dolly's `capture::FrameGrabber::run_while` watchdog).
+    pub fn recv_timeout(&self, timeout: std::time::Duration) -> Result<Frame, RecvError> {
+        loop {
+            if self.engine.has_error() {
+                return Err(RecvError::StreamError);
+            }
+            match self.rx.recv_timeout(timeout) {
+                Ok(item) => {
+                    if let Some(frame) = self.engine.process_channel_item(item) {
+                        return Ok(frame);
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => return Err(RecvError::Timeout),
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Err(RecvError::Disconnected),
+            }
+        }
+    }
+
     /// Get the dimensions the frames will be captured in
     pub fn get_output_frame_size(&mut self) -> [u32; 2] {
         self.engine.get_output_frame_size()
@@ -158,6 +181,29 @@ impl Capturer {
         RawCapturer { capturer: self }
     }
 }
+
+/// Failure modes for [`Capturer::recv_timeout`].
+#[derive(Debug)]
+pub enum RecvError {
+    /// No frame arrived within the given timeout.
+    Timeout,
+    /// The capture stream's channel was dropped — capture has ended.
+    Disconnected,
+    /// ScreenCaptureKit reported a stream error.
+    StreamError,
+}
+
+impl std::fmt::Display for RecvError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RecvError::Timeout => write!(f, "timed out waiting for a frame"),
+            RecvError::Disconnected => write!(f, "capture stream ended"),
+            RecvError::StreamError => write!(f, "capture stream failed"),
+        }
+    }
+}
+
+impl Error for RecvError {}
 
 pub struct RawCapturer<'a> {
     capturer: &'a Capturer,
