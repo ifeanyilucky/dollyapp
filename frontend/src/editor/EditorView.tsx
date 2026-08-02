@@ -1,6 +1,6 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { generateZoomKeyframes } from "../motion-engine";
+import { useEffect, useRef, useState } from "react";
+import { generateZoomKeyframes, type ZoomKeyframe } from "../motion-engine";
 import { aspectRatioPreset, type AspectRatioId } from "./aspect";
 import { deleteRecording, loadRecording, revealInFinder, type LoadedRecording } from "./api";
 import { IconRail } from "./IconRail";
@@ -42,6 +42,13 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   const [aspectRatioId, setAspectRatioId] = useState<AspectRatioId>("original");
   const [cutRegions, setCutRegions] = useState<CutRegion[]>([]);
   const [speedRegions, setSpeedRegions] = useState<SpeedRegion[]>([]);
+  const [zoomKeyframes, setZoomKeyframes] = useState<ZoomKeyframe[]>([]);
+  // Effective in/out of the whole clip (video-relative seconds). Defaults to
+  // the full source range once the video metadata loads; trimming the amber
+  // timeline bar writes these, and the render loop/seek clamp playback to
+  // them so nothing plays before `clipStartS` or after `clipEndS`.
+  const [clipStartS, setClipStartS] = useState(0);
+  const [clipEndS, setClipEndS] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -60,6 +67,10 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   cutRegionsRef.current = cutRegions;
   const speedRegionsRef = useRef(speedRegions);
   speedRegionsRef.current = speedRegions;
+  const clipStartRef = useRef(clipStartS);
+  clipStartRef.current = clipStartS;
+  const clipEndRef = useRef(clipEndS);
+  clipEndRef.current = clipEndS;
 
   useEffect(() => {
     let cancelled = false;
@@ -67,7 +78,10 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
     setError(null);
     loadRecording(bundlePath)
       .then((rec) => {
-        if (!cancelled) setLoaded(rec);
+        if (!cancelled) {
+          setLoaded(rec);
+          setZoomKeyframes(generateZoomKeyframes(rec.cursorTrack, { factor: 1 }));
+        }
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(String(e));
@@ -105,14 +119,6 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
     rendererRef.current?.setOutputAspect(aspectRatioPreset(aspectRatioId).ratio ?? undefined);
   }, [loaded, aspectRatioId]);
 
-  // Same keyframes SceneRenderer generates internally, recomputed here
-  // purely for the timeline's zoom-track visualization — cheap pure
-  // function, not worth threading a getter through SceneRenderer for.
-  const zoomKeyframes = useMemo(() => {
-    if (!loaded) return [];
-    return generateZoomKeyframes(loaded.cursorTrack, { factor: 1 });
-  }, [loaded]);
-
   // Render loop: reads `video.currentTime` directly every animation
   // frame rather than relying on the `timeupdate` event, which fires far
   // less often than 60fps.
@@ -142,6 +148,18 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
           return;
         }
 
+        // Clip in/out — the timeline's amber bar trim. Nothing plays before
+        // `clipStartS` or past `clipEndS`; hitting the end pauses. `clipEndS`
+        // is 0 until the video metadata loads, so guard on it to avoid
+        // clamping a pre-metadata video straight to 0 on the first tick.
+        const clipEnd = clipEndRef.current;
+        if (clipStartRef.current > 0 && video.currentTime < clipStartRef.current) {
+          video.currentTime = clipStartRef.current;
+        } else if (clipEnd > 0 && video.currentTime >= clipEnd) {
+          video.currentTime = clipEnd;
+          video.pause();
+        }
+
         const speed = regionAt(speedRegionsRef.current, video.currentTime);
         const effectiveRate = playbackRateRef.current * (speed?.rate ?? 1);
         if (Math.abs(video.playbackRate - effectiveRate) > 1e-6) {
@@ -161,16 +179,32 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   function togglePlay() {
     const video = videoRef.current;
     if (!video) return;
-    if (video.paused) void video.play();
-    else video.pause();
+    if (video.paused) {
+      // Respect the clip in/out: never resume from before `clipStartS`, and
+      // restart from the top if playback had already reached the end.
+      if (clipEndS > 0 && video.currentTime >= clipEndS) video.currentTime = clipStartS;
+      else if (video.currentTime < clipStartS) video.currentTime = clipStartS;
+      void video.play();
+    } else video.pause();
   }
 
   function handleSeek(seconds: number) {
     const video = videoRef.current;
     if (!video || !loaded) return;
-    video.currentTime = seconds;
-    rendererRef.current?.resetAt(seconds * 1_000_000 + loaded.meta.videoStartUs);
-    setCurrentTime(seconds);
+    const clamped = Math.max(clipStartS, Math.min(seconds, clipEndS));
+    video.currentTime = clamped;
+    rendererRef.current?.resetAt(clamped * 1_000_000 + loaded.meta.videoStartUs);
+    setCurrentTime(clamped);
+  }
+
+  /** Writes the amber timeline bar's in/out window (video-relative seconds). */
+  function trimVideoClip(startS: number, endS: number) {
+    setClipStartS(startS);
+    setClipEndS(endS);
+  }
+
+  function changeZoomKeyframes(keyframes: ZoomKeyframe[]) {
+    setZoomKeyframes(keyframes);
   }
 
   function cyclePlaybackRate() {
@@ -269,7 +303,12 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
         src={convertFileSrc(loaded.screenVideoPath)}
         className="hidden"
         preload="auto"
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+        onLoadedMetadata={(e) => {
+          const d = e.currentTarget.duration;
+          setDuration(d);
+          setClipStartS(0);
+          setClipEndS(d);
+        }}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
       />
@@ -283,6 +322,10 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
           onSeek={handleSeek}
           zoomKeyframes={zoomKeyframes}
           videoStartUs={loaded.meta.videoStartUs}
+          clipStartS={clipStartS}
+          clipEndS={clipEndS}
+          onTrimVideoClip={trimVideoClip}
+          onChangeZoomKeyframes={changeZoomKeyframes}
           cutRegions={cutRegions}
           speedRegions={speedRegions}
           onAddCut={addCutRegion}

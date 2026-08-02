@@ -1,5 +1,5 @@
 import { Gauge, Pause, Play, Scissors, SkipBack, SkipForward, X } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ZoomKeyframe } from "../motion-engine";
 import { SPEED_REGION_RATES, type CutRegion, type SpeedRegion } from "./regions";
 
@@ -25,6 +25,17 @@ function clampPct(v: number): number {
 type Tool = "none" | "cut" | "speed";
 const MIN_DRAG_SECONDS = 0.15;
 
+/** Which handle is being dragged right now — drives the grabbing/col-resize
+ * cursor and keeps the white trim lines visible while a trim drag is in
+ * flight even if the pointer strays off the element. */
+type ActiveDrag =
+  | { kind: "zoom-move" | "zoom-trim-left" | "zoom-trim-right"; index: number }
+  | { kind: "video-move" | "video-trim-left" | "video-trim-right" };
+
+function clampS(v: number, lo: number, hi: number): number {
+  return Math.min(Math.max(v, lo), hi);
+}
+
 export function Timeline({
   duration,
   currentTime,
@@ -33,6 +44,10 @@ export function Timeline({
   onSeek,
   zoomKeyframes,
   videoStartUs,
+  clipStartS,
+  clipEndS,
+  onTrimVideoClip,
+  onChangeZoomKeyframes,
   cutRegions,
   speedRegions,
   onAddCut,
@@ -50,6 +65,12 @@ export function Timeline({
    * converted to video-relative seconds internally via `videoStartUs`. */
   zoomKeyframes: ZoomKeyframe[];
   videoStartUs: number;
+  /** Effective in/out of the whole clip (video-relative seconds) — the
+   * amber bar's trimmed range. */
+  clipStartS: number;
+  clipEndS: number;
+  onTrimVideoClip: (startS: number, endS: number) => void;
+  onChangeZoomKeyframes: (keyframes: ZoomKeyframe[]) => void;
   cutRegions: CutRegion[];
   speedRegions: SpeedRegion[];
   onAddCut: (region: CutRegion) => void;
@@ -60,6 +81,8 @@ export function Timeline({
 }) {
   const [tool, setTool] = useState<Tool>("none");
   const [drag, setDrag] = useState<{ startS: number; endS: number } | null>(null);
+  const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
 
   const safeDuration = duration > 0 ? duration : 1;
   const tickInterval = pickTickInterval(safeDuration);
@@ -102,6 +125,129 @@ export function Timeline({
     window.addEventListener("mouseup", onUp);
   }
 
+  /** Attaches window mousemove/mouseup listeners for a drag, computing each
+   * move's `deltaS` from the pointer position — same pattern as
+   * `handleTrackMouseDown`'s region drag. */
+  function startDrag(startX: number, rect: DOMRect, onMove: (deltaS: number) => void, onEnd?: () => void) {
+    function handleMove(ev: MouseEvent) {
+      onMove(((ev.clientX - startX) / rect.width) * safeDuration);
+    }
+    function handleUp() {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      onEnd?.();
+    }
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+  }
+
+  /** Applies a drag result to a zoom keyframe, preserving `level`/`center`
+   * and converting the video-relative seconds back to absolute µs. */
+  function commitZoom(original: ZoomKeyframe, startS: number, endS: number) {
+    const updated: ZoomKeyframe = {
+      ...original,
+      startT: Math.round(startS * 1e6 + videoStartUs),
+      endT: Math.round(endS * 1e6 + videoStartUs),
+    };
+    onChangeZoomKeyframes(zoomKeyframes.map((k) => (k === original ? updated : k)));
+  }
+
+  function startZoomMove(kf: ZoomKeyframe, index: number) {
+    return (e: React.PointerEvent<HTMLDivElement>) => {
+      if (tool !== "none") return;
+      const rect = trackRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const origStartS = (kf.startT - videoStartUs) / 1e6;
+      const durS = (kf.endT - kf.startT) / 1e6;
+      setActiveDrag({ kind: "zoom-move", index });
+      startDrag(
+        e.clientX,
+        rect,
+        (deltaS) => {
+          const newStart = clampS(origStartS + deltaS, 0, safeDuration - durS);
+          commitZoom(kf, newStart, newStart + durS);
+        },
+        () => setActiveDrag(null),
+      );
+    };
+  }
+
+  function startZoomTrim(kf: ZoomKeyframe, index: number, edge: "left" | "right") {
+    return (e: React.PointerEvent<HTMLDivElement>) => {
+      if (tool !== "none") return;
+      const rect = trackRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const origStartS = (kf.startT - videoStartUs) / 1e6;
+      const origEndS = (kf.endT - videoStartUs) / 1e6;
+      setActiveDrag({ kind: edge === "left" ? "zoom-trim-left" : "zoom-trim-right", index });
+      startDrag(
+        e.clientX,
+        rect,
+        (deltaS) => {
+          if (edge === "left") {
+            const newStart = clampS(origStartS + deltaS, 0, origEndS - MIN_DRAG_SECONDS);
+            commitZoom(kf, newStart, origEndS);
+          } else {
+            const newEnd = clampS(origEndS + deltaS, origStartS + MIN_DRAG_SECONDS, safeDuration);
+            commitZoom(kf, origStartS, newEnd);
+          }
+        },
+        () => setActiveDrag(null),
+      );
+    };
+  }
+
+  function startVideoMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (tool !== "none") return;
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const origStart = clipStartS;
+    const durS = clipEndS - clipStartS;
+    setActiveDrag({ kind: "video-move" });
+    startDrag(
+      e.clientX,
+      rect,
+      (deltaS) => {
+        const newStart = clampS(origStart + deltaS, 0, safeDuration - durS);
+        onTrimVideoClip(newStart, newStart + durS);
+      },
+      () => setActiveDrag(null),
+    );
+  }
+
+  function startVideoTrim(edge: "left" | "right") {
+    return (e: React.PointerEvent<HTMLDivElement>) => {
+      if (tool !== "none") return;
+      const rect = trackRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const origStart = clipStartS;
+      const origEnd = clipEndS;
+      setActiveDrag({ kind: edge === "left" ? "video-trim-left" : "video-trim-right" });
+      startDrag(
+        e.clientX,
+        rect,
+        (deltaS) => {
+          if (edge === "left") {
+            const newStart = clampS(origStart + deltaS, 0, origEnd - MIN_DRAG_SECONDS);
+            onTrimVideoClip(newStart, origEnd);
+          } else {
+            const newEnd = clampS(origEnd + deltaS, origStart + MIN_DRAG_SECONDS, safeDuration);
+            onTrimVideoClip(origStart, newEnd);
+          }
+        },
+        () => setActiveDrag(null),
+      );
+    };
+  }
+
   const dragLeftPct = drag ? clampPct((Math.min(drag.startS, drag.endS) / safeDuration) * 100) : 0;
   const dragWidthPct = drag
     ? clampPct((Math.abs(drag.endS - drag.startS) / safeDuration) * 100)
@@ -112,7 +258,7 @@ export function Timeline({
       <div className="flex items-center gap-2 pb-3">
         <button
           type="button"
-          onClick={() => onSeek(0)}
+          onClick={() => onSeek(clipStartS)}
           className="rounded p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
           aria-label="Skip to start"
         >
@@ -132,7 +278,7 @@ export function Timeline({
         </button>
         <button
           type="button"
-          onClick={() => onSeek(safeDuration)}
+          onClick={() => onSeek(clipEndS > 0 ? clipEndS : safeDuration)}
           className="rounded p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100"
           aria-label="Skip to end"
         >
@@ -172,7 +318,7 @@ export function Timeline({
       {/* Ruler + clip track + zoom track, sharing one relative wrapper so
        * the playhead can be positioned once by percentage and span all
        * three. */}
-      <div className="relative">
+      <div ref={trackRef} className="relative">
         <div className="relative h-4 text-[10px] text-neutral-600">
           {ticks.map((t) => (
             <span
@@ -186,14 +332,61 @@ export function Timeline({
         </div>
 
         <div
-          className={`relative mt-1 h-9 overflow-hidden rounded-md bg-amber-600/70 ${
+          className={`relative mt-1 h-9 overflow-hidden rounded-md bg-neutral-800/60 ${
             tool !== "none" ? "cursor-crosshair" : "cursor-pointer"
           }`}
           onMouseDown={handleTrackMouseDown}
         >
-          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-medium text-amber-950">
-            Clip · {formatTime(safeDuration)}
-          </span>
+          {/* The clip itself — a sub-bar spanning the in/out window. Hover
+           * reveals white trim lines at both edges (col-resize); the body
+           * drags the window once it's been trimmed. Disabled while a
+           * cut/speed tool is active so region drags win. */}
+          <div
+            className={`group absolute top-0 flex h-full items-center justify-center overflow-hidden rounded-md bg-amber-600/70 ${
+              tool !== "none"
+                ? "cursor-crosshair"
+                : activeDrag?.kind === "video-move"
+                  ? "cursor-grabbing"
+                  : "cursor-grab"
+            }`}
+            style={{
+              left: `${clampPct((clipStartS / safeDuration) * 100)}%`,
+              width: `${clampPct(((clipEndS - clipStartS) / safeDuration) * 100)}%`,
+            }}
+            onPointerDown={startVideoMove}
+            onMouseDown={(e) => {
+              if (tool === "none") e.stopPropagation();
+            }}
+            title={`Clip ${formatTime(clipStartS)}–${formatTime(clipEndS)}`}
+          >
+            <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 whitespace-nowrap text-[10px] font-medium text-amber-950">
+              Clip · {formatTime(clipStartS)}–{formatTime(clipEndS)}
+            </span>
+            <div
+              onPointerDown={startVideoTrim("left")}
+              onMouseDown={(e) => {
+                if (tool === "none") e.stopPropagation();
+              }}
+              className={`absolute inset-y-0 left-0 w-1.5 cursor-col-resize bg-white transition-opacity ${
+                activeDrag?.kind === "video-trim-left"
+                  ? "opacity-100"
+                  : "opacity-0 group-hover:opacity-100"
+              }`}
+              title="Trim start"
+            />
+            <div
+              onPointerDown={startVideoTrim("right")}
+              onMouseDown={(e) => {
+                if (tool === "none") e.stopPropagation();
+              }}
+              className={`absolute inset-y-0 right-0 w-1.5 cursor-col-resize bg-white transition-opacity ${
+                activeDrag?.kind === "video-trim-right"
+                  ? "opacity-100"
+                  : "opacity-0 group-hover:opacity-100"
+              }`}
+              title="Trim end"
+            />
+          </div>
 
           {cutRegions.map((r) => {
             const leftPct = clampPct((r.startS / safeDuration) * 100);
@@ -268,8 +461,13 @@ export function Timeline({
           )}
         </div>
 
-        <div className="relative mt-1.5 h-7 cursor-pointer rounded-md bg-neutral-800/60" onMouseDown={handleTrackMouseDown}>
-          {zoomKeyframes.map((kf) => {
+        <div
+          className={`relative mt-1.5 h-7 rounded-md bg-neutral-800/60 ${
+            tool !== "none" ? "cursor-crosshair" : "cursor-pointer"
+          }`}
+          onMouseDown={handleTrackMouseDown}
+        >
+          {zoomKeyframes.map((kf, index) => {
             const startS = (kf.startT - videoStartUs) / 1e6;
             const endS = (kf.endT - videoStartUs) / 1e6;
             const leftPct = clampPct((startS / safeDuration) * 100);
@@ -277,12 +475,46 @@ export function Timeline({
             if (widthPct <= 0) return null;
             return (
               <div
-                key={kf.startT}
-                className="pointer-events-none absolute top-0 flex h-full items-center justify-center rounded-md bg-indigo-500/80 text-[10px] font-medium text-white"
+                key={index}
+                className={`group absolute top-0 flex h-full items-center justify-center overflow-hidden rounded-md bg-indigo-500/80 text-[10px] font-medium text-white ${
+                  tool !== "none"
+                    ? "cursor-crosshair"
+                    : activeDrag?.kind === "zoom-move" && activeDrag?.index === index
+                      ? "cursor-grabbing"
+                      : "cursor-grab"
+                }`}
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                 title={`Zoom ${kf.level.toFixed(1)}x`}
+                onPointerDown={startZoomMove(kf, index)}
+                onMouseDown={(e) => {
+                  if (tool === "none") e.stopPropagation();
+                }}
               >
                 {widthPct > 6 ? `${kf.level.toFixed(1)}x` : ""}
+                <div
+                  onPointerDown={startZoomTrim(kf, index, "left")}
+                  onMouseDown={(e) => {
+                    if (tool === "none") e.stopPropagation();
+                  }}
+                  className={`absolute inset-y-0 left-0 w-1.5 cursor-col-resize bg-white transition-opacity ${
+                    activeDrag?.kind === "zoom-trim-left" && activeDrag?.index === index
+                      ? "opacity-100"
+                      : "opacity-0 group-hover:opacity-100"
+                  }`}
+                  title="Trim zoom start"
+                />
+                <div
+                  onPointerDown={startZoomTrim(kf, index, "right")}
+                  onMouseDown={(e) => {
+                    if (tool === "none") e.stopPropagation();
+                  }}
+                  className={`absolute inset-y-0 right-0 w-1.5 cursor-col-resize bg-white transition-opacity ${
+                    activeDrag?.kind === "zoom-trim-right" && activeDrag?.index === index
+                      ? "opacity-100"
+                      : "opacity-0 group-hover:opacity-100"
+                  }`}
+                  title="Trim zoom end"
+                />
               </div>
             );
           })}
