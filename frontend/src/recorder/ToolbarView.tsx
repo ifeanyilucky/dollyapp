@@ -1,3 +1,5 @@
+import { useEffect } from "react";
+import { closeToolbar } from "./api";
 import { SourcePickerBar } from "./SourcePickerBar";
 import { useRecordingState } from "./useRecordingState";
 
@@ -21,14 +23,36 @@ import { useRecordingState } from "./useRecordingState";
 export function ToolbarView() {
   const { isRecording, isPaused, busy, error, start, stop, togglePause } = useRecordingState();
 
+  // Escape closes the toolbar (the app keeps running — the tray menu's
+  // "Show Toolbar" brings it back). Skipped while a dropdown menu is open,
+  // where Escape is already claimed by the menu itself.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && !document.querySelector('[role="menu"]')) {
+        void closeToolbar();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   return (
-    <div className="flex h-screen w-screen justify-center bg-transparent pt-2">
+    // `data-tauri-drag-region="deep"` turns the whole window (its visible
+    // pill included) into a drag handle, so the floating toolbar can be
+    // moved around — Tauri's drag-region script walks the mousedown path
+    // and buttons/links without the attribute block the drag, so the
+    // controls stay clickable.
+    <div
+      data-tauri-drag-region="deep"
+      className="flex h-screen w-screen justify-center bg-transparent pt-2"
+    >
       <div className="flex flex-col items-center gap-1.5">
         <SourcePickerBar
           disabled={isRecording || busy}
           isRecording={isRecording}
           isPaused={isPaused}
           busy={busy}
+          onClose={() => void closeToolbar()}
           onToggleRecording={() => void (isRecording ? stop() : start())}
           onTogglePause={() => void togglePause()}
         />

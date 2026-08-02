@@ -59,6 +59,7 @@ export function SourcePickerBar({
   isRecording,
   isPaused,
   busy,
+  onClose,
   onToggleRecording,
   onTogglePause,
 }: {
@@ -66,6 +67,7 @@ export function SourcePickerBar({
   isRecording: boolean;
   isPaused: boolean;
   busy: boolean;
+  onClose: () => void;
   onToggleRecording: () => void;
   onTogglePause: () => void;
 }) {
@@ -282,6 +284,20 @@ export function SourcePickerBar({
           ) : (
             <Circle className="h-4 w-4" fill="currentColor" />
           )}
+        </button>
+
+        <div className="mx-1 h-8 w-px bg-neutral-800" />
+
+        {/* Closes (hides) the toolbar — the tray menu's "Show Toolbar"
+            brings it back. */}
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-8 w-8 items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+          aria-label="Close toolbar"
+          title="Close (Esc)"
+        >
+          <X className="h-4 w-4" />
         </button>
       </div>
 

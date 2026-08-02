@@ -52,3 +52,10 @@ export function resumeRecording(): Promise<void> {
 export function setMicEnabled(enabled: boolean): Promise<void> {
   return invoke("set_mic_enabled", { enabled });
 }
+
+/** Hides the floating toolbar (Escape, or the toolbar's close button). The
+ * app keeps running in the background — the tray menu's "Show Toolbar"
+ * brings it back. */
+export function closeToolbar(): Promise<void> {
+  return invoke("close_toolbar");
+}
