@@ -10,7 +10,7 @@ export * from "./autoZoom";
 
 import type { CursorSample, CursorTrack } from "../bundle/types";
 import { DEFAULT_ONE_EURO_PARAMS, OneEuroFilter2D, type OneEuroFilterParams } from "./oneEuroFilter";
-import { DEFAULT_SPRING, stepSpring, type SpringState } from "./spring";
+import { PAN_SPRING, stepSpring, ZOOM_LEVEL_SPRING, type SpringState } from "./spring";
 import {
   generateZoomKeyframes,
   viewportForKeyframe,
@@ -66,24 +66,41 @@ export class MotionEngine {
     this.lastT = atT;
   }
 
-  private targetAt(tUs: number): { level: number; center: { x: number; y: number } } {
+  private targetAt(
+    tUs: number,
+    livePosition?: { x: number; y: number },
+  ): { level: number; center: { x: number; y: number } } {
     const active = this.keyframes.find((kf) => tUs >= kf.startT && tUs <= kf.endT);
-    if (active) return { level: active.level, center: active.center };
+    if (active) {
+      // The keyframe decides *when* to zoom and *how far*; while it's
+      // active, pan continuously trails the live cursor instead of
+      // holding at the cluster's fixed centroid — a static hold reads as
+      // "zoomed near the action," a live follow reads as "focused on the
+      // action," which is the actual ask. Falls back to the keyframe's
+      // own center if no live position is available (e.g. export frames
+      // that don't carry it — see viewportForKeyframe's clamping, which
+      // still keeps this on-frame either way).
+      return { level: active.level, center: livePosition ?? active.center };
+    }
     return { level: 1, center: { x: this.frame.width / 2, y: this.frame.height / 2 } };
   }
 
   /** `tUs`: microseconds since the recording's clock epoch, matching
-   * `CursorTrack` timestamps. */
-  transformAt(tUs: number): FrameTransform {
+   * `CursorTrack` timestamps. `livePosition` (point space, same as
+   * `CursorTrack` samples): the smoothed cursor position at `tUs`, used as
+   * the pan target while a zoom is active — see `targetAt`. */
+  transformAt(tUs: number, livePosition?: { x: number; y: number }): FrameTransform {
     const dt = Math.max((tUs - this.lastT) / 1e6, 0);
     this.lastT = tUs;
 
-    const target = this.targetAt(tUs);
-    // Pan and zoom share this loop's dt so they arrive together
-    // (ARCHITECTURE.md, "Easing").
-    this.levelSpring = stepSpring(this.levelSpring, target.level, dt, DEFAULT_SPRING);
-    this.centerXSpring = stepSpring(this.centerXSpring, target.center.x, dt, DEFAULT_SPRING);
-    this.centerYSpring = stepSpring(this.centerYSpring, target.center.y, dt, DEFAULT_SPRING);
+    const target = this.targetAt(tUs, livePosition);
+    // Pan and zoom now use deliberately different spring stiffness — see
+    // PAN_SPRING's doc comment for why sharing one clock stopped being
+    // the right call once pan started continuously chasing the live
+    // cursor instead of jumping once between two fixed points.
+    this.levelSpring = stepSpring(this.levelSpring, target.level, dt, ZOOM_LEVEL_SPRING);
+    this.centerXSpring = stepSpring(this.centerXSpring, target.center.x, dt, PAN_SPRING);
+    this.centerYSpring = stepSpring(this.centerYSpring, target.center.y, dt, PAN_SPRING);
 
     const resolved: ZoomKeyframe = {
       startT: 0,

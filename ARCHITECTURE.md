@@ -137,18 +137,28 @@ dcutoff   = 1.0
    clamped to 1.2x–3.0x, with the viewport constrained to stay inside frame
    bounds.
 
+### Pan follows the live cursor, not a fixed point
+While a zoom keyframe is active, the pan target is the cursor's current
+(smoothed) position, continuously — not the cluster's fixed centroid held
+for the block's whole duration. A fixed hold reads as "zoomed near the
+action"; a live follow reads as "focused on the action," which is the
+actual goal. The keyframe still governs *when* a zoom starts/ends and *how
+far* it goes (`level`); only the pan target became live.
+
 ### Easing
 Zoom transitions use a **critically damped spring**, not a bezier curve —
 springs settle without overshoot and their duration scales naturally with
-distance.
+distance. Pan and zoom no longer share one spring clock: pan is now
+continuously re-targeted (chasing a moving cursor, not jumping once between
+two fixed points), so it needs to stay stiffer/more responsive than zoom
+level, which can afford to be slower and more cinematic.
 
 ```
-stiffness = 120
-damping   = 2 * sqrt(stiffness)   // critical damping
+zoom level: stiffness = 40   // slower, unhurried
+pan:        stiffness = 90   // responsive enough to keep the cursor
+                              // comfortably inside the cropped viewport
+damping = 2 * sqrt(stiffness)   // critical damping, both springs
 ```
-
-Pan and zoom are interpolated separately but share one spring clock so they
-arrive together.
 
 ### Cursor rendering
 The system cursor is excluded from capture (`SCStreamConfiguration.showsCursor

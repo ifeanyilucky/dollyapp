@@ -21,6 +21,19 @@ export function criticallyDamped(stiffness: number): SpringParams {
 /** Default used by zoom/pan transitions (ARCHITECTURE.md). */
 export const DEFAULT_SPRING = criticallyDamped(120);
 
+/** Zoom *level* transitions (in/out) — deliberately slower than pan for a
+ * cinematic, unhurried feel. Settle time scales with distance either way
+ * (that's the whole point of a spring over a fixed-duration easing curve),
+ * this just sets the pace. */
+export const ZOOM_LEVEL_SPRING = criticallyDamped(40);
+
+/** Pan (viewport center) while a zoom is active now continuously chases
+ * the live cursor position rather than jumping once between two fixed
+ * points (see `MotionEngine.targetAt`) — stiffer than the zoom-level
+ * spring so it stays responsive enough to keep the cursor comfortably
+ * inside the cropped viewport instead of trailing it off-frame. */
+export const PAN_SPRING = criticallyDamped(90);
+
 export interface SpringState {
   value: number;
   velocity: number;

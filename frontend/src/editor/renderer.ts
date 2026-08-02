@@ -1,5 +1,6 @@
 import type { CursorEvent, CursorSample, CursorTrack } from "../bundle/types";
 import { createMotionEngine, smoothCursorTrack, type FrameSize, type MotionEngine } from "../motion-engine";
+import { DEFAULT_STYLE, type StyleSettings } from "./style";
 
 const CLICK_PULSE_DURATION_US = 220_000;
 const CLICK_RIPPLE_DURATION_US = 500_000;
@@ -8,6 +9,13 @@ const CLICK_RIPPLE_DURATION_US = 500_000;
  * (ARCHITECTURE.md, "Cursor rendering"). Big and readable, per the intent
  * of a screen-recording tool whose entire pitch is legibility. */
 const CURSOR_SIZE_PX = 34;
+
+interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface SceneRendererOptions {
   /** Display size in *points*, not pixels — matches the space
@@ -18,9 +26,10 @@ export interface SceneRendererOptions {
 }
 
 /**
- * Renders one frame of the preview: crops/pans the video per the motion
- * engine's resolved viewport, then draws a smoothed, animated cursor on
- * top. This is the "live preview" half of ARCHITECTURE.md's "preview and
+ * Renders one frame of the preview: fills a background, crops/pans the
+ * video per the motion engine's resolved viewport into a padded/rounded/
+ * shadowed content rect, then draws a smoothed, animated cursor on top.
+ * This is the "live preview" half of ARCHITECTURE.md's "preview and
  * export must never diverge" rule — export (not built yet) will read
  * transforms from the same `motion-engine` module, just driven from Rust
  * instead of a canvas loop.
@@ -30,9 +39,11 @@ export class SceneRenderer {
   private smoothedSamples: CursorSample[];
   private events: CursorEvent[];
   private scaleFactor: number;
+  private videoAspect: number;
 
   constructor(opts: SceneRendererOptions) {
     this.scaleFactor = opts.scaleFactor;
+    this.videoAspect = opts.frame.width / opts.frame.height;
     this.motionEngine = createMotionEngine(opts.cursorTrack, opts.frame);
     this.smoothedSamples = smoothCursorTrack(opts.cursorTrack.samples);
     this.events = opts.cursorTrack.events;
@@ -47,9 +58,24 @@ export class SceneRenderer {
   /** `tUs`: microseconds since the recording's clock epoch — see
    * `RecordingMeta.videoStartUs` for how to derive this from a `<video>`
    * element's `currentTime`. */
-  draw(ctx: CanvasRenderingContext2D, video: HTMLVideoElement, tUs: number): void {
+  draw(
+    ctx: CanvasRenderingContext2D,
+    video: HTMLVideoElement,
+    tUs: number,
+    style: StyleSettings = DEFAULT_STYLE,
+  ): void {
     const canvas = ctx.canvas;
-    const { viewport } = this.motionEngine.transformAt(tUs);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = style.backgroundColor;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const content = this.contentRect(canvas.width, canvas.height, style.padding);
+
+    const cursor = this.cursorPositionAt(tUs);
+    // Live cursor position drives pan while a zoom is active (see
+    // ARCHITECTURE.md, "Pan follows the live cursor") — computed before
+    // `transformAt` so it can be passed straight in.
+    const { viewport } = this.motionEngine.transformAt(tUs, cursor ?? undefined);
 
     // `viewport` is in point space; the video's actual pixels are at
     // `scaleFactor`x that (ARCHITECTURE.md, "Recording format").
@@ -58,17 +84,50 @@ export class SceneRenderer {
     const sw = viewport.width * this.scaleFactor;
     const sh = viewport.height * this.scaleFactor;
 
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+    // Shadow pass: a filled rounded rect casts the shadow. Drawn
+    // separately from the clipped video below because CanvasRenderingContext2D
+    // applies shadow to whatever's drawn, and a full-bleed drawImage
+    // would otherwise shadow the entire crop instead of just its edge.
+    ctx.save();
+    ctx.shadowColor = style.shadowColor;
+    ctx.shadowBlur = style.shadowBlur;
+    ctx.shadowOffsetY = style.shadowOffsetY;
+    ctx.fillStyle = "#000";
+    roundedRectPath(ctx, content, style.cornerRadius);
+    ctx.fill();
+    ctx.restore();
 
-    const cursor = this.cursorPositionAt(tUs);
+    ctx.save();
+    roundedRectPath(ctx, content, style.cornerRadius);
+    ctx.clip();
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(video, sx, sy, sw, sh, content.x, content.y, content.width, content.height);
+    ctx.restore();
+
     if (!cursor) return;
 
-    const cx = ((cursor.x - viewport.x) / viewport.width) * canvas.width;
-    const cy = ((cursor.y - viewport.y) / viewport.height) * canvas.height;
+    const cx = content.x + ((cursor.x - viewport.x) / viewport.width) * content.width;
+    const cy = content.y + ((cursor.y - viewport.y) / viewport.height) * content.height;
 
-    this.drawClickRipples(ctx, tUs, viewport, canvas);
+    this.drawClickRipples(ctx, tUs, viewport, content);
     drawCursorGlyph(ctx, cx, cy, this.clickPulseScaleAt(tUs));
+  }
+
+  /** Video content rect, centered in the canvas and inset by `padding` on
+   * all sides while preserving the recording's own aspect ratio (padding
+   * shrinks the video, it doesn't stretch it). */
+  private contentRect(canvasWidth: number, canvasHeight: number, padding: number): Rect {
+    const availWidth = Math.max(canvasWidth - padding * 2, 1);
+    const availHeight = Math.max(canvasHeight - padding * 2, 1);
+
+    let width = availWidth;
+    let height = width / this.videoAspect;
+    if (height > availHeight) {
+      height = availHeight;
+      width = height * this.videoAspect;
+    }
+
+    return { x: (canvasWidth - width) / 2, y: (canvasHeight - height) / 2, width, height };
   }
 
   private cursorPositionAt(tUs: number): { x: number; y: number } | null {
@@ -111,7 +170,7 @@ export class SceneRenderer {
     ctx: CanvasRenderingContext2D,
     tUs: number,
     viewport: { x: number; y: number; width: number; height: number },
-    canvas: HTMLCanvasElement,
+    content: Rect,
   ): void {
     for (const event of this.events) {
       if (event.kind !== "leftDown" && event.kind !== "rightDown") continue;
@@ -119,8 +178,8 @@ export class SceneRenderer {
       if (age < 0 || age > CLICK_RIPPLE_DURATION_US) continue;
 
       const f = age / CLICK_RIPPLE_DURATION_US;
-      const cx = ((event.x - viewport.x) / viewport.width) * canvas.width;
-      const cy = ((event.y - viewport.y) / viewport.height) * canvas.height;
+      const cx = content.x + ((event.x - viewport.x) / viewport.width) * content.width;
+      const cy = content.y + ((event.y - viewport.y) / viewport.height) * content.height;
       const radius = CURSOR_SIZE_PX * 0.4 + f * CURSOR_SIZE_PX * 1.2;
 
       ctx.beginPath();
@@ -130,6 +189,18 @@ export class SceneRenderer {
       ctx.stroke();
     }
   }
+}
+
+function roundedRectPath(ctx: CanvasRenderingContext2D, rect: Rect, radius: number): void {
+  const r = Math.min(radius, rect.width / 2, rect.height / 2);
+  const { x, y, width: w, height: h } = rect;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 /** A simplified macOS-arrow-like pointer path, filled white with a dark
