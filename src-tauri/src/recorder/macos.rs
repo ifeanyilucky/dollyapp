@@ -242,6 +242,42 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
     Ok(active.bundle_dir)
 }
 
+/// Stops capture and cursor tracking like `stop`, but throws the result
+/// away instead of writing a bundle — the toolbar's "restart"/"discard"
+/// controls (a user who messed up wants the partial `screen.mov` gone,
+/// not sitting in `~/Movies/Dolly` as a phantom recording). Unlike `stop`,
+/// doesn't touch the toolbar/main-window swap: the caller stays right
+/// where it was, ready to record again immediately.
+pub async fn discard(app: &AppHandle, state: &RecorderState) -> Result<()> {
+    let active = state
+        .active
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or_else(|| anyhow!("no recording in progress"))?;
+    let _ = app.emit(RECORDING_STATE_EVENT, false);
+
+    active.capture_stop.store(true, Ordering::SeqCst);
+    // Errors here don't matter — the whole point is discarding, so a
+    // capture-thread panic or mid-write failure isn't worth surfacing.
+    if let Some(handle) = active.capture_thread {
+        let _ = handle.join();
+    }
+    if let Some(mic) = active.mic {
+        let _ = mic.stop();
+    }
+    let _ = cursor::stop_on_main_thread(app).await;
+
+    if let Err(e) = std::fs::remove_dir_all(&active.bundle_dir) {
+        tracing::error!(
+            "failed to remove discarded recording at {}: {e}",
+            active.bundle_dir.display()
+        );
+    }
+
+    Ok(())
+}
+
 pub fn pause(app: &AppHandle, state: &RecorderState) -> Result<()> {
     let mut guard = state.active.lock().unwrap();
     let active = guard

@@ -46,6 +46,7 @@ pub fn run() {
             commands::recording_status,
             commands::start_recording,
             commands::stop_recording,
+            commands::discard_recording,
             commands::pause_recording,
             commands::resume_recording,
             commands::set_mic_enabled,

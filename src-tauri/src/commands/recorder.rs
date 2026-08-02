@@ -26,6 +26,20 @@ pub async fn stop_recording(
         .map_err(|e| e.to_string())
 }
 
+/// Throws away the in-progress recording instead of saving it — see
+/// `recorder::discard`'s doc comment. Leaves the toolbar showing (the
+/// caller can immediately start a new recording), unlike `stop_recording`
+/// which swaps to the editor.
+#[tauri::command]
+pub async fn discard_recording(
+    app: AppHandle,
+    state: State<'_, RecorderState>,
+) -> Result<(), String> {
+    recorder::discard(&app, &state)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn pause_recording(app: AppHandle, state: State<'_, RecorderState>) -> Result<(), String> {
     recorder::pause(&app, &state).map_err(|e| e.to_string())
