@@ -80,7 +80,7 @@ impl FrameGrabber {
             excluded_targets: None,
             output_type: FrameType::BGRAFrame,
             output_resolution: Resolution::Captured,
-            crop_area: None,
+            crop_area,
         };
 
         let capturer = Capturer::build(options)
