@@ -22,19 +22,22 @@ function clampPct(v: number): number {
   return Math.min(100, Math.max(0, v));
 }
 
+function clampS(v: number, lo: number, hi: number): number {
+  return Math.min(Math.max(v, lo), hi);
+}
+
 type Tool = "none" | "cut" | "speed";
 const MIN_DRAG_SECONDS = 0.15;
 
 /** Which handle is being dragged right now — drives the grabbing/col-resize
  * cursor and keeps the white trim lines visible while a trim drag is in
- * flight even if the pointer strays off the element. */
+ * flight even if the pointer strays off the element. Exactly one of these
+ * can be active at a time: every drag goes through `beginDrag`, which uses
+ * native Pointer Capture (see its doc comment) so a single physical
+ * gesture can never be picked up by two handles at once. */
 type ActiveDrag =
   | { kind: "zoom-move" | "zoom-trim-left" | "zoom-trim-right"; index: number }
   | { kind: "video-move" | "video-trim-left" | "video-trim-right" };
-
-function clampS(v: number, lo: number, hi: number): number {
-  return Math.min(Math.max(v, lo), hi);
-}
 
 export function Timeline({
   duration,
@@ -80,7 +83,7 @@ export function Timeline({
   onCycleSpeedRate: (id: string) => void;
 }) {
   const [tool, setTool] = useState<Tool>("none");
-  const [drag, setDrag] = useState<{ startS: number; endS: number } | null>(null);
+  const [regionDrag, setRegionDrag] = useState<{ startS: number; endS: number } | null>(null);
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
 
@@ -90,167 +93,159 @@ export function Timeline({
   for (let t = 0; t <= safeDuration; t += tickInterval) ticks.push(t);
   const playheadPct = clampPct((currentTime / safeDuration) * 100);
 
-  function secondsAtPointer(e: { clientX: number }, rect: DOMRect): number {
-    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+  function secondsAtClientX(clientX: number, rect: DOMRect): number {
+    const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
     return frac * safeDuration;
   }
 
-  function handleTrackMouseDown(e: React.MouseEvent<HTMLDivElement>) {
-    const rect = e.currentTarget.getBoundingClientRect();
+  /**
+   * Starts a drag on `e.currentTarget` using native Pointer Capture
+   * instead of `window`-level mouse listeners. Capturing the pointer on
+   * the exact element the user pressed down on means every subsequent
+   * `pointermove`/`pointerup` for that gesture is routed *directly* to
+   * that element regardless of what's visually under the cursor as it
+   * moves — the browser handles this, not manual hit-testing — so two
+   * drags started from two different handles can never cross-talk, and
+   * there's no `window` listener that could outlive its drag if a
+   * `pointerup` is ever missed (a `pointercancel` still fires and cleans
+   * up the same way). `onMove` receives the total horizontal delta since
+   * the press, in seconds, already clamped to the track's own width.
+   */
+  function beginDrag(
+    e: React.PointerEvent<HTMLDivElement>,
+    kind: ActiveDrag,
+    onMove: (deltaS: number) => void,
+  ) {
+    if (tool !== "none") return;
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const target = e.currentTarget;
+    const pointerId = e.pointerId;
+    const startX = e.clientX;
+    target.setPointerCapture(pointerId);
+    setActiveDrag(kind);
+
+    function handleMove(ev: PointerEvent) {
+      onMove(((ev.clientX - startX) / rect.width) * safeDuration);
+    }
+    function handleEnd() {
+      target.removeEventListener("pointermove", handleMove);
+      target.removeEventListener("pointerup", handleEnd);
+      target.removeEventListener("pointercancel", handleEnd);
+      if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
+      setActiveDrag(null);
+    }
+    target.addEventListener("pointermove", handleMove);
+    target.addEventListener("pointerup", handleEnd);
+    target.addEventListener("pointercancel", handleEnd);
+  }
+
+  /** Same idea as `beginDrag`, for the cut/speed region tools: drags out a
+   * brand-new region between the press point and the current pointer,
+   * instead of moving/trimming an existing one. */
+  function beginRegionDrag(e: React.PointerEvent<HTMLDivElement>) {
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
     if (tool === "none") {
-      onSeek(secondsAtPointer(e, rect));
+      onSeek(secondsAtClientX(e.clientX, rect));
       return;
     }
 
-    const startS = secondsAtPointer(e, rect);
-    setDrag({ startS, endS: startS });
+    e.preventDefault();
+    const target = e.currentTarget;
+    const pointerId = e.pointerId;
+    target.setPointerCapture(pointerId);
+    const startS = secondsAtClientX(e.clientX, rect);
+    setRegionDrag({ startS, endS: startS });
 
-    function onMove(ev: MouseEvent) {
-      setDrag({ startS, endS: secondsAtPointer(ev, rect) });
+    function handleMove(ev: PointerEvent) {
+      setRegionDrag({ startS, endS: secondsAtClientX(ev.clientX, rect) });
     }
-    function onUp(ev: MouseEvent) {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      const endS = secondsAtPointer(ev, rect);
+    function handleEnd(ev: PointerEvent) {
+      target.removeEventListener("pointermove", handleMove);
+      target.removeEventListener("pointerup", handleEnd);
+      target.removeEventListener("pointercancel", handleEnd);
+      if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
+
+      const endS = secondsAtClientX(ev.clientX, rect);
       const lo = Math.min(startS, endS);
       const hi = Math.max(startS, endS);
-      setDrag(null);
+      setRegionDrag(null);
       if (hi - lo < MIN_DRAG_SECONDS) return;
       const id = crypto.randomUUID();
       if (tool === "cut") onAddCut({ id, startS: lo, endS: hi });
       else onAddSpeed({ id, startS: lo, endS: hi, rate: SPEED_REGION_RATES[0] });
       setTool("none");
     }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    target.addEventListener("pointermove", handleMove);
+    target.addEventListener("pointerup", handleEnd);
+    target.addEventListener("pointercancel", handleEnd);
   }
 
-  /** Attaches window mousemove/mouseup listeners for a drag, computing each
-   * move's `deltaS` from the pointer position — same pattern as
-   * `handleTrackMouseDown`'s region drag. */
-  function startDrag(startX: number, rect: DOMRect, onMove: (deltaS: number) => void, onEnd?: () => void) {
-    function handleMove(ev: MouseEvent) {
-      onMove(((ev.clientX - startX) / rect.width) * safeDuration);
-    }
-    function handleUp() {
-      window.removeEventListener("mousemove", handleMove);
-      window.removeEventListener("mouseup", handleUp);
-      onEnd?.();
-    }
-    window.addEventListener("mousemove", handleMove);
-    window.addEventListener("mouseup", handleUp);
-  }
-
-  /** Applies a drag result to a zoom keyframe, preserving `level`/`center`
-   * and converting the video-relative seconds back to absolute µs. */
-  function commitZoom(original: ZoomKeyframe, startS: number, endS: number) {
-    const updated: ZoomKeyframe = {
-      ...original,
-      startT: Math.round(startS * 1e6 + videoStartUs),
-      endT: Math.round(endS * 1e6 + videoStartUs),
-    };
-    onChangeZoomKeyframes(zoomKeyframes.map((k) => (k === original ? updated : k)));
-  }
-
-  function startZoomMove(kf: ZoomKeyframe, index: number) {
-    return (e: React.PointerEvent<HTMLDivElement>) => {
-      if (tool !== "none") return;
-      const rect = trackRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const origStartS = (kf.startT - videoStartUs) / 1e6;
-      const durS = (kf.endT - kf.startT) / 1e6;
-      setActiveDrag({ kind: "zoom-move", index });
-      startDrag(
-        e.clientX,
-        rect,
-        (deltaS) => {
-          const newStart = clampS(origStartS + deltaS, 0, safeDuration - durS);
-          commitZoom(kf, newStart, newStart + durS);
-        },
-        () => setActiveDrag(null),
-      );
-    };
-  }
-
-  function startZoomTrim(kf: ZoomKeyframe, index: number, edge: "left" | "right") {
-    return (e: React.PointerEvent<HTMLDivElement>) => {
-      if (tool !== "none") return;
-      const rect = trackRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const origStartS = (kf.startT - videoStartUs) / 1e6;
-      const origEndS = (kf.endT - videoStartUs) / 1e6;
-      setActiveDrag({ kind: edge === "left" ? "zoom-trim-left" : "zoom-trim-right", index });
-      startDrag(
-        e.clientX,
-        rect,
-        (deltaS) => {
-          if (edge === "left") {
-            const newStart = clampS(origStartS + deltaS, 0, origEndS - MIN_DRAG_SECONDS);
-            commitZoom(kf, newStart, origEndS);
-          } else {
-            const newEnd = clampS(origEndS + deltaS, origStartS + MIN_DRAG_SECONDS, safeDuration);
-            commitZoom(kf, origStartS, newEnd);
-          }
-        },
-        () => setActiveDrag(null),
-      );
-    };
-  }
-
-  function startVideoMove(e: React.PointerEvent<HTMLDivElement>) {
-    if (tool !== "none") return;
-    const rect = trackRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const origStart = clipStartS;
-    const durS = clipEndS - clipStartS;
-    setActiveDrag({ kind: "video-move" });
-    startDrag(
-      e.clientX,
-      rect,
-      (deltaS) => {
-        const newStart = clampS(origStart + deltaS, 0, safeDuration - durS);
-        onTrimVideoClip(newStart, newStart + durS);
-      },
-      () => setActiveDrag(null),
+  /** Applies a drag result to one zoom keyframe by index — index rather
+   * than object identity, so this can't accidentally touch a different
+   * keyframe even if the array was replaced from under it mid-drag. */
+  function commitZoom(index: number, startS: number, endS: number) {
+    onChangeZoomKeyframes(
+      zoomKeyframes.map((k, i) =>
+        i === index
+          ? { ...k, startT: Math.round(startS * 1e6 + videoStartUs), endT: Math.round(endS * 1e6 + videoStartUs) }
+          : k,
+      ),
     );
   }
 
-  function startVideoTrim(edge: "left" | "right") {
-    return (e: React.PointerEvent<HTMLDivElement>) => {
-      if (tool !== "none") return;
-      const rect = trackRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const origStart = clipStartS;
-      const origEnd = clipEndS;
-      setActiveDrag({ kind: edge === "left" ? "video-trim-left" : "video-trim-right" });
-      startDrag(
-        e.clientX,
-        rect,
-        (deltaS) => {
-          if (edge === "left") {
-            const newStart = clampS(origStart + deltaS, 0, origEnd - MIN_DRAG_SECONDS);
-            onTrimVideoClip(newStart, origEnd);
-          } else {
-            const newEnd = clampS(origEnd + deltaS, origStart + MIN_DRAG_SECONDS, safeDuration);
-            onTrimVideoClip(origStart, newEnd);
-          }
-        },
-        () => setActiveDrag(null),
-      );
-    };
+  function handleZoomMove(e: React.PointerEvent<HTMLDivElement>, kf: ZoomKeyframe, index: number) {
+    const origStartS = (kf.startT - videoStartUs) / 1e6;
+    const durS = (kf.endT - kf.startT) / 1e6;
+    beginDrag(e, { kind: "zoom-move", index }, (deltaS) => {
+      const newStart = clampS(origStartS + deltaS, 0, safeDuration - durS);
+      commitZoom(index, newStart, newStart + durS);
+    });
   }
 
-  const dragLeftPct = drag ? clampPct((Math.min(drag.startS, drag.endS) / safeDuration) * 100) : 0;
-  const dragWidthPct = drag
-    ? clampPct((Math.abs(drag.endS - drag.startS) / safeDuration) * 100)
+  function handleZoomTrim(e: React.PointerEvent<HTMLDivElement>, kf: ZoomKeyframe, index: number, edge: "left" | "right") {
+    const origStartS = (kf.startT - videoStartUs) / 1e6;
+    const origEndS = (kf.endT - videoStartUs) / 1e6;
+    beginDrag(e, { kind: edge === "left" ? "zoom-trim-left" : "zoom-trim-right", index }, (deltaS) => {
+      if (edge === "left") {
+        commitZoom(index, clampS(origStartS + deltaS, 0, origEndS - MIN_DRAG_SECONDS), origEndS);
+      } else {
+        commitZoom(index, origStartS, clampS(origEndS + deltaS, origStartS + MIN_DRAG_SECONDS, safeDuration));
+      }
+    });
+  }
+
+  function handleVideoMove(e: React.PointerEvent<HTMLDivElement>) {
+    const origStart = clipStartS;
+    const durS = clipEndS - clipStartS;
+    beginDrag(e, { kind: "video-move" }, (deltaS) => {
+      const newStart = clampS(origStart + deltaS, 0, safeDuration - durS);
+      onTrimVideoClip(newStart, newStart + durS);
+    });
+  }
+
+  function handleVideoTrim(e: React.PointerEvent<HTMLDivElement>, edge: "left" | "right") {
+    const origStart = clipStartS;
+    const origEnd = clipEndS;
+    beginDrag(e, { kind: edge === "left" ? "video-trim-left" : "video-trim-right" }, (deltaS) => {
+      if (edge === "left") {
+        onTrimVideoClip(clampS(origStart + deltaS, 0, origEnd - MIN_DRAG_SECONDS), origEnd);
+      } else {
+        onTrimVideoClip(origStart, clampS(origEnd + deltaS, origStart + MIN_DRAG_SECONDS, safeDuration));
+      }
+    });
+  }
+
+  const dragLeftPct = regionDrag
+    ? clampPct((Math.min(regionDrag.startS, regionDrag.endS) / safeDuration) * 100)
+    : 0;
+  const dragWidthPct = regionDrag
+    ? clampPct((Math.abs(regionDrag.endS - regionDrag.startS) / safeDuration) * 100)
     : 0;
 
   return (
@@ -335,16 +330,19 @@ export function Timeline({
           className={`relative mt-1 h-9 overflow-hidden rounded-md bg-neutral-800/60 ${
             tool !== "none" ? "cursor-crosshair" : "cursor-pointer"
           }`}
-          onMouseDown={handleTrackMouseDown}
+          onPointerDown={beginRegionDrag}
         >
           {/* The clip itself — a sub-bar spanning the in/out window. Hover
            * reveals white trim lines at both edges (col-resize); the body
            * drags the window once it's been trimmed. Disabled while a
-           * cut/speed tool is active so region drags win. */}
+           * cut/speed tool is active so region drags win — `beginDrag`
+           * itself already no-ops in that case, `pointer-events-none`
+           * here just also lets clicks fall through to the track under it
+           * so a region can still be started *on top of* the clip. */}
           <div
             className={`group absolute top-0 flex h-full items-center justify-center overflow-hidden rounded-md bg-amber-600/70 ${
               tool !== "none"
-                ? "cursor-crosshair"
+                ? "pointer-events-none"
                 : activeDrag?.kind === "video-move"
                   ? "cursor-grabbing"
                   : "cursor-grab"
@@ -353,20 +351,14 @@ export function Timeline({
               left: `${clampPct((clipStartS / safeDuration) * 100)}%`,
               width: `${clampPct(((clipEndS - clipStartS) / safeDuration) * 100)}%`,
             }}
-            onPointerDown={startVideoMove}
-            onMouseDown={(e) => {
-              if (tool === "none") e.stopPropagation();
-            }}
+            onPointerDown={handleVideoMove}
             title={`Clip ${formatTime(clipStartS)}–${formatTime(clipEndS)}`}
           >
             <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 whitespace-nowrap text-[10px] font-medium text-amber-950">
               Clip · {formatTime(clipStartS)}–{formatTime(clipEndS)}
             </span>
             <div
-              onPointerDown={startVideoTrim("left")}
-              onMouseDown={(e) => {
-                if (tool === "none") e.stopPropagation();
-              }}
+              onPointerDown={(e) => handleVideoTrim(e, "left")}
               className={`absolute inset-y-0 left-0 w-1.5 cursor-col-resize bg-white transition-opacity ${
                 activeDrag?.kind === "video-trim-left"
                   ? "opacity-100"
@@ -375,10 +367,7 @@ export function Timeline({
               title="Trim start"
             />
             <div
-              onPointerDown={startVideoTrim("right")}
-              onMouseDown={(e) => {
-                if (tool === "none") e.stopPropagation();
-              }}
+              onPointerDown={(e) => handleVideoTrim(e, "right")}
               className={`absolute inset-y-0 right-0 w-1.5 cursor-col-resize bg-white transition-opacity ${
                 activeDrag?.kind === "video-trim-right"
                   ? "opacity-100"
@@ -404,7 +393,7 @@ export function Timeline({
                     e.stopPropagation();
                     onRemoveCut(r.id);
                   }}
-                  onMouseDown={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
                   className="flex h-4 w-4 items-center justify-center rounded-full bg-neutral-950/80 text-neutral-200 opacity-0 group-hover:opacity-100"
                   aria-label="Remove cut"
                 >
@@ -430,7 +419,7 @@ export function Timeline({
                     e.stopPropagation();
                     onCycleSpeedRate(r.id);
                   }}
-                  onMouseDown={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
                   className="rounded bg-neutral-950/70 px-1 text-[10px] font-medium text-amber-200"
                 >
                   {r.rate}x
@@ -441,7 +430,7 @@ export function Timeline({
                     e.stopPropagation();
                     onRemoveSpeed(r.id);
                   }}
-                  onMouseDown={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
                   className="flex h-4 w-4 items-center justify-center rounded-full bg-neutral-950/80 text-neutral-200 opacity-0 group-hover:opacity-100"
                   aria-label="Remove speed region"
                 >
@@ -451,7 +440,7 @@ export function Timeline({
             );
           })}
 
-          {drag && (
+          {regionDrag && (
             <div
               className={`pointer-events-none absolute top-0 h-full border-2 ${
                 tool === "cut" ? "border-red-400 bg-red-400/20" : "border-amber-400 bg-amber-400/20"
@@ -465,7 +454,7 @@ export function Timeline({
           className={`relative mt-1.5 h-7 rounded-md bg-neutral-800/60 ${
             tool !== "none" ? "cursor-crosshair" : "cursor-pointer"
           }`}
-          onMouseDown={handleTrackMouseDown}
+          onPointerDown={beginRegionDrag}
         >
           {zoomKeyframes.map((kf, index) => {
             const startS = (kf.startT - videoStartUs) / 1e6;
@@ -478,24 +467,18 @@ export function Timeline({
                 key={index}
                 className={`group absolute top-0 flex h-full items-center justify-center overflow-hidden rounded-md bg-indigo-500/80 text-[10px] font-medium text-white ${
                   tool !== "none"
-                    ? "cursor-crosshair"
+                    ? "pointer-events-none"
                     : activeDrag?.kind === "zoom-move" && activeDrag?.index === index
                       ? "cursor-grabbing"
                       : "cursor-grab"
                 }`}
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                 title={`Zoom ${kf.level.toFixed(1)}x`}
-                onPointerDown={startZoomMove(kf, index)}
-                onMouseDown={(e) => {
-                  if (tool === "none") e.stopPropagation();
-                }}
+                onPointerDown={(e) => handleZoomMove(e, kf, index)}
               >
                 {widthPct > 6 ? `${kf.level.toFixed(1)}x` : ""}
                 <div
-                  onPointerDown={startZoomTrim(kf, index, "left")}
-                  onMouseDown={(e) => {
-                    if (tool === "none") e.stopPropagation();
-                  }}
+                  onPointerDown={(e) => handleZoomTrim(e, kf, index, "left")}
                   className={`absolute inset-y-0 left-0 w-1.5 cursor-col-resize bg-white transition-opacity ${
                     activeDrag?.kind === "zoom-trim-left" && activeDrag?.index === index
                       ? "opacity-100"
@@ -504,10 +487,7 @@ export function Timeline({
                   title="Trim zoom start"
                 />
                 <div
-                  onPointerDown={startZoomTrim(kf, index, "right")}
-                  onMouseDown={(e) => {
-                    if (tool === "none") e.stopPropagation();
-                  }}
+                  onPointerDown={(e) => handleZoomTrim(e, kf, index, "right")}
                   className={`absolute inset-y-0 right-0 w-1.5 cursor-col-resize bg-white transition-opacity ${
                     activeDrag?.kind === "zoom-trim-right" && activeDrag?.index === index
                       ? "opacity-100"

@@ -77,6 +77,18 @@ export class MotionEngine {
     this.outputAspect = aspect;
   }
 
+  /** Called live when the user edits a zoom keyframe (move/trim) in the
+   * timeline — swaps in the new keyframe list without resetting spring
+   * state, so playback keeps flowing through the edit instead of jumping.
+   * This is the single source of truth `transformAt` reads from; nothing
+   * else may hold a second, independently-generated copy (that was the
+   * bug: the editor's editable keyframes and the ones actually driving
+   * playback used to be two different arrays that only ever agreed by
+   * coincidence, at load time, before the first edit). */
+  setKeyframes(keyframes: ZoomKeyframe[]): void {
+    this.keyframes = keyframes;
+  }
+
   /** Call after a scrub/seek so the next `transformAt` doesn't treat the
    * jump as elapsed playback time. */
   reset(atT = 0): void {

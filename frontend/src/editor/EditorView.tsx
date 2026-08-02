@@ -12,7 +12,7 @@ import {
   type CutRegion,
   type SpeedRegion,
 } from "./regions";
-import { SceneRenderer } from "./renderer";
+import { SceneRenderer, shiftCursorTrack } from "./renderer";
 import { StylePanel } from "./StylePanel";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
 import { Timeline } from "./Timeline";
@@ -80,7 +80,14 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
       .then((rec) => {
         if (!cancelled) {
           setLoaded(rec);
-          setZoomKeyframes(generateZoomKeyframes(rec.cursorTrack, { factor: 1 }));
+          // Generated from the *origin-shifted* track, matching what
+          // `SceneRenderer` builds internally (see its constructor) — a
+          // keyframe's `center` has to land in the same video-local space
+          // the renderer works in, or panning targets the wrong spot for
+          // any window/area recording (non-zero display origin).
+          const origin = { x: rec.meta.display.originX, y: rec.meta.display.originY };
+          const shifted = shiftCursorTrack(rec.cursorTrack, origin);
+          setZoomKeyframes(generateZoomKeyframes(shifted, { factor: 1 }));
         }
       })
       .catch((e: unknown) => {
@@ -94,10 +101,11 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   // Build the renderer once the bundle's loaded — cursor coordinates are
   // in point space, so the motion engine gets point-space frame
   // dimensions, not the video's actual pixel dimensions (ARCHITECTURE.md,
-  // "Recording format"). Deliberately *not* keyed on `aspectRatioId` —
-  // switching it later goes through `renderer.setOutputAspect` instead
-  // (see the effect below), so it reshapes in place rather than
-  // recreating the renderer and resetting playback.
+  // "Recording format"). Deliberately *not* keyed on `aspectRatioId` or
+  // `zoomKeyframes` — switching/editing those later goes through
+  // `renderer.setOutputAspect`/`setZoomKeyframes` instead (see the effects
+  // below), so they apply in place rather than recreating the renderer
+  // and resetting playback.
   useEffect(() => {
     if (!loaded) return;
     const { widthPx, heightPx, scaleFactor, originX, originY } = loaded.meta.display;
@@ -107,6 +115,7 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
       cursorTrack: loaded.cursorTrack,
       origin: { x: originX, y: originY },
       outputAspect: aspectRatioPreset(aspectRatioId).ratio ?? undefined,
+      zoomKeyframes,
     });
     rendererRef.current.resetAt(loaded.meta.videoStartUs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -118,6 +127,17 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
     if (!loaded) return;
     rendererRef.current?.setOutputAspect(aspectRatioPreset(aspectRatioId).ratio ?? undefined);
   }, [loaded, aspectRatioId]);
+
+  // Live zoom-keyframe edits (move/trim in the timeline) — this is the fix
+  // for the preview never matching what the timeline showed: the renderer
+  // used to generate its *own*, independent copy of these keyframes
+  // internally and never learned about edits made here. Now `zoomKeyframes`
+  // is the single source of truth for both the timeline's visualization
+  // and actual playback.
+  useEffect(() => {
+    if (!loaded) return;
+    rendererRef.current?.setZoomKeyframes(zoomKeyframes);
+  }, [loaded, zoomKeyframes]);
 
   // Render loop: reads `video.currentTime` directly every animation
   // frame rather than relying on the `timeupdate` event, which fires far

@@ -1,5 +1,10 @@
 import type { CursorEvent, CursorSample, CursorTrack } from "../bundle/types";
-import { createMotionEngine, smoothCursorTrack, type FrameSize, type MotionEngine } from "../motion-engine";
+import {
+  MotionEngine,
+  smoothCursorTrack,
+  type FrameSize,
+  type ZoomKeyframe,
+} from "../motion-engine";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
 import { GRADIENT_PRESETS, paintCanvasGradient, WALLPAPER_IMAGES } from "./wallpapers";
 
@@ -35,12 +40,22 @@ export interface SceneRendererOptions {
    * `viewportForKeyframe`'s doc comment. `undefined` keeps the source
    * recording's own aspect. */
   outputAspect?: number;
+  /** Zoom keyframes driving playback — the *same* array the timeline
+   * shows and lets the user move/trim (`SceneRenderer` doesn't generate
+   * its own copy internally; see `setZoomKeyframes` for how edits reach
+   * the already-constructed motion engine live). */
+  zoomKeyframes: ZoomKeyframe[];
 }
 
 /** Re-anchors every position-bearing sample/event in `track` from global
  * point space onto `origin` — see `SceneRendererOptions.origin`'s doc
- * comment. A no-op copy when `origin` is `(0, 0)` (the common case). */
-function shiftCursorTrack(track: CursorTrack, origin: { x: number; y: number }): CursorTrack {
+ * comment. A no-op copy when `origin` is `(0, 0)` (the common case).
+ * Exported so `EditorView` can apply the *same* shift before generating
+ * zoom keyframes from the cursor track — those keyframes' `center` values
+ * need to land in the same video-local space this renderer works in, or
+ * panning would target the wrong spot for any window/area recording
+ * (non-zero origin). */
+export function shiftCursorTrack(track: CursorTrack, origin: { x: number; y: number }): CursorTrack {
   if (origin.x === 0 && origin.y === 0) return track;
   return {
     ...track,
@@ -95,7 +110,11 @@ export class SceneRenderer {
     this.videoAspect = opts.frame.width / opts.frame.height;
     this.outputAspect = opts.outputAspect;
     const cursorTrack = shiftCursorTrack(opts.cursorTrack, opts.origin ?? { x: 0, y: 0 });
-    this.motionEngine = createMotionEngine(cursorTrack, opts.frame, undefined, opts.outputAspect);
+    // Built directly from the caller's keyframes rather than
+    // `createMotionEngine` (which would generate its own, independent
+    // copy from the cursor track) — see `SceneRendererOptions.zoomKeyframes`'s
+    // doc comment for why there must only ever be one array of these.
+    this.motionEngine = new MotionEngine(opts.frame, opts.zoomKeyframes, opts.outputAspect);
     this.smoothedSamples = smoothCursorTrack(cursorTrack.samples);
     this.events = cursorTrack.events;
   }
@@ -104,6 +123,12 @@ export class SceneRenderer {
    * elapsed playback time (see `MotionEngine.reset`). */
   resetAt(tUs: number): void {
     this.motionEngine.reset(tUs);
+  }
+
+  /** Called live when the user edits a zoom keyframe (move/trim) in the
+   * timeline — see `MotionEngine.setKeyframes`. */
+  setZoomKeyframes(keyframes: ZoomKeyframe[]): void {
+    this.motionEngine.setKeyframes(keyframes);
   }
 
   /** Switches the output aspect ratio live — see
