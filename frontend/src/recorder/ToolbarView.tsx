@@ -1,3 +1,4 @@
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef } from "react";
 import { closeToolbar, setToolbarHitRect } from "./api";
@@ -31,6 +32,63 @@ export function ToolbarView() {
   const { isRecording, isPaused, busy, error, elapsedMs, start, stop, discard, restart, togglePause } =
     useRecordingState();
   const pillRef = useRef<HTMLDivElement>(null);
+
+  // Custom "drag from anywhere" instead of Tauri's `data-tauri-drag-region`
+  // (which is what the old comment below described): the built-in handler
+  // won't start a drag from any clickable element (button/link/...) and it
+  // steals the mousedown the instant it fires, so pressing on the pill's
+  // buttons could never move the window and clicking a button would fight
+  // with the drag. This instead waits for a few pixels of movement after
+  // mousedown before handing off to the OS window drag (`startDragging`),
+  // so a plain click still lands on the control underneath while pressing
+  // and holding anywhere drags the toolbar. Both the picker (non-recording)
+  // and the recording controls live under this root, so both modes get it.
+  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const suppressClickRef = useRef(false);
+
+  const DRAG_THRESHOLD_PX = 4;
+
+  function handlePointerDown(e: React.PointerEvent) {
+    if (e.button !== 0) return;
+    // A fresh press is never a drag yet — clears any leftover "suppress
+    // the next click" flag from a drag that ended without delivering one.
+    suppressClickRef.current = false;
+    dragStartRef.current = { x: e.clientX, y: e.clientY };
+  }
+
+  function handlePointerMove(e: React.PointerEvent) {
+    const start = dragStartRef.current;
+    if (!start) return;
+    if (e.buttons === 0) {
+      dragStartRef.current = null;
+      return;
+    }
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return;
+    dragStartRef.current = null;
+    suppressClickRef.current = true;
+    getCurrentWindow()
+      .startDragging()
+      .catch(() => {
+        suppressClickRef.current = false;
+      });
+  }
+
+  function handlePointerUp() {
+    dragStartRef.current = null;
+  }
+
+  // The OS window drag eats the mouseup, but a synthesized click can still
+  // arrive on the element the press started on — swallow it so a drag that
+  // began on a button doesn't also trigger that button.
+  function handleClickCapture(e: React.MouseEvent) {
+    if (suppressClickRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      suppressClickRef.current = false;
+    }
+  }
 
   // Escape closes the toolbar (the app keeps running — the tray menu's
   // "Show Toolbar" brings it back). Skipped while a dropdown menu is open,
@@ -107,14 +165,12 @@ export function ToolbarView() {
   }
 
   return (
-    // `data-tauri-drag-region="deep"` turns the whole window (its visible
-    // pill included) into a drag handle, so the floating toolbar can be
-    // moved around — Tauri's drag-region script walks the mousedown path
-    // and buttons/links without the attribute block the drag, so the
-    // controls stay clickable.
     <div
-      data-tauri-drag-region="deep"
       className="flex h-screen w-screen items-start justify-center bg-transparent pt-2"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onClickCapture={handleClickCapture}
     >
       <div ref={pillRef} className="flex flex-col items-center gap-1.5">
         {isRecording ? (
