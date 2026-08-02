@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager, Wry};
 use crate::recorder;
 
 const TOGGLE_ID: &str = "toggle_recording";
+const SHOW_TOOLBAR_ID: &str = "show_toolbar";
 
 /// Wraps the toggle item so its label can be flipped between "Start" and
 /// "Stop" after each call to `toggle_recording`. Tauri's menu handles are
@@ -28,7 +29,8 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let quit_item = PredefinedMenuItem::quit(app, Some("Quit Dolly"))?;
-    let menu = Menu::with_items(app, &[&toggle_item, &quit_item])?;
+    let show_item = MenuItem::with_id(app, SHOW_TOOLBAR_ID, "Show Toolbar", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&toggle_item, &show_item, &quit_item])?;
 
     app.manage(ToggleMenuItem(toggle_item));
 
@@ -43,7 +45,12 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .tooltip("Dolly")
         .on_menu_event(|app, event| {
-            if event.id() == TOGGLE_ID {
+            if event.id() == SHOW_TOOLBAR_ID {
+                // Brings the floating toolbar back after it was closed
+                // (Escape / its close button) — it can't be reopened any
+                // other way.
+                let _ = crate::toolbar::show(app);
+            } else if event.id() == TOGGLE_ID {
                 toggle_recording(app.clone());
             }
         })

@@ -26,10 +26,13 @@ const WIDTH: f64 = 900.0;
 /// pill stays pinned near the top (see `ToolbarView`), so this only grows
 /// the window downward, invisibly, until a menu opens.
 const HEIGHT: f64 = 420.0;
-/// Gap between the toolbar's top edge and the display's own top edge —
-/// clears the menu bar/notch while still reading as "docked to the top",
-/// matching Screen Studio's own recording bar placement.
-const TOP_MARGIN: f64 = 44.0;
+/// Vertical distance from the window's top edge to the visible pill's
+/// center. The pill is pinned to the top of this (taller) window via
+/// `pt-2` and is 64px tall (8px top padding + 48px controls + 8px bottom
+/// padding), so its center sits 40px below the window's top edge. Used to
+/// position the window so the *pill* — not the taller, mostly-invisible
+/// window itself — lands on the display's vertical center.
+const PILL_CENTER_OFFSET: f64 = 40.0;
 
 /// Creates (if it doesn't already exist) and shows the floating toolbar.
 pub fn show(app: &AppHandle) -> tauri::Result<()> {
@@ -39,9 +42,9 @@ pub fn show(app: &AppHandle) -> tauri::Result<()> {
         return Ok(());
     }
 
-    let (display_x, display_y, display_width, _) = main_display_bounds();
+    let (display_x, display_y, display_width, display_height) = main_display_bounds();
     let x = display_x + (display_width - WIDTH) / 2.0;
-    let y = display_y + TOP_MARGIN;
+    let y = display_y + display_height / 2.0 - PILL_CENTER_OFFSET;
 
     WebviewWindowBuilder::new(
         app,

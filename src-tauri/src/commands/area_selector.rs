@@ -3,6 +3,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder
 
 use crate::capture::{self, CropArea};
 use crate::recorder::{self, RecorderState};
+use crate::toolbar;
 
 const AREA_SELECTOR_LABEL: &str = "area-selector";
 /// Emitted to the main window once an area is confirmed, so its picker UI
@@ -31,6 +32,10 @@ pub fn open_area_selector(app: AppHandle) -> Result<(), String> {
     if app.get_webview_window(AREA_SELECTOR_LABEL).is_some() {
         return Ok(());
     }
+
+    // Get the always-on-top toolbar out of the way so it can't overlap the
+    // selection surface (it sits at the screen center now).
+    toolbar::hide(&app);
 
     let display_id = match capture::main_display().ok_or("no capturable display found")? {
         scap::Target::Display(d) => d.id,
@@ -97,14 +102,19 @@ pub fn confirm_area_selection(
         },
     );
     close_area_selector(&app);
+    // The toolbar comes back so the user can hit Start on the area they
+    // just drew.
+    let _ = toolbar::show(&app);
     Ok(())
 }
 
 /// Called by the area-selector overlay on cancel (Escape, or clicking
-/// outside without dragging) — closes it without changing the selection.
+/// outside without dragging) — closes it without changing the selection,
+/// and brings the toolbar back.
 #[tauri::command]
 pub fn cancel_area_selection(app: AppHandle) {
     close_area_selector(&app);
+    let _ = toolbar::show(&app);
 }
 
 fn close_area_selector(app: &AppHandle) {

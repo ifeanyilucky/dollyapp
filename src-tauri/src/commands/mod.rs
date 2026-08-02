@@ -8,6 +8,7 @@ mod capture;
 mod editor;
 mod permissions;
 mod recorder;
+mod toolbar;
 mod window_picker;
 
 pub use area_selector::*;
@@ -15,4 +16,5 @@ pub use capture::*;
 pub use editor::*;
 pub use permissions::*;
 pub use recorder::*;
+pub use toolbar::*;
 pub use window_picker::*;

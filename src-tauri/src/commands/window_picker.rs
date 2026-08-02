@@ -3,6 +3,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder
 
 use crate::capture::{self, TargetKind, WindowHitInfo};
 use crate::recorder::{self, RecorderState};
+use crate::toolbar;
 
 const WINDOW_PICKER_LABEL: &str = "window-picker";
 /// Emitted to the main/toolbar window once a window is picked (and
@@ -33,6 +34,11 @@ pub fn open_window_picker(app: AppHandle) -> Result<(), String> {
     if app.get_webview_window(WINDOW_PICKER_LABEL).is_some() {
         return Ok(());
     }
+
+    // The toolbar is always-on-top too — get it out of the way so it
+    // doesn't sit over the overlay's centered label (or block hits on the
+    // windows behind it) while the user is picking.
+    toolbar::hide(&app);
 
     let display_id = match capture::main_display().ok_or("no capturable display found")? {
         scap::Target::Display(d) => d.id,
@@ -113,14 +119,18 @@ pub fn pick_window_and_record(
     // safe.
     recorder::start(&app, &state).map_err(|e| e.to_string())?;
     close_window_picker(&app);
+    // The toolbar (which the user just picked from) comes back to show the
+    // stop control.
+    let _ = toolbar::show(&app);
     Ok(())
 }
 
 /// Called by the overlay on cancel (Escape) — closes it without changing
-/// the selection.
+/// the selection, and brings the toolbar back.
 #[tauri::command]
 pub fn cancel_window_picker(app: AppHandle) {
     close_window_picker(&app);
+    let _ = toolbar::show(&app);
 }
 
 fn close_window_picker(app: &AppHandle) {

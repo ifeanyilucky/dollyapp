@@ -50,6 +50,7 @@ pub fn run() {
             commands::delete_recording,
             commands::enter_toolbar_mode,
             commands::return_to_toolbar,
+            commands::close_toolbar,
         ])
         .manage(recorder::RecorderState::default())
         .setup(|app| {
