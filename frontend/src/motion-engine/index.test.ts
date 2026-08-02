@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_ZOOM_KEYFRAME_EXTRAS, type ZoomKeyframe } from "./autoZoom";
 import { MotionEngine } from "./index";
-import type { ZoomKeyframe } from "./autoZoom";
 
 const FRAME = { width: 1920, height: 1080 };
+
+function kf(overrides: Pick<ZoomKeyframe, "startT" | "endT" | "level" | "center">): ZoomKeyframe {
+  return { ...DEFAULT_ZOOM_KEYFRAME_EXTRAS, ...overrides };
+}
 
 function stepFor(engine: MotionEngine, seconds: number, dtMs = 16, livePosition?: { x: number; y: number }) {
   let t = 0;
@@ -26,7 +30,7 @@ describe("MotionEngine pan-follows-cursor", () => {
 
   it("while a zoom is active, pan converges on the live cursor position, not the keyframe's fixed center", () => {
     const keyframes: ZoomKeyframe[] = [
-      { startT: 0, endT: 5_000_000, level: 2, center: { x: 500, y: 500 } },
+      kf({ startT: 0, endT: 5_000_000, level: 2, center: { x: 500, y: 500 } }),
     ];
     const engine = new MotionEngine(FRAME, keyframes);
     // Live cursor is far from the keyframe's own `center` — after enough
@@ -42,7 +46,7 @@ describe("MotionEngine pan-follows-cursor", () => {
 
   it("falls back to the keyframe's own center when no live position is supplied", () => {
     const keyframes: ZoomKeyframe[] = [
-      { startT: 0, endT: 5_000_000, level: 2, center: { x: 600, y: 300 } },
+      kf({ startT: 0, endT: 5_000_000, level: 2, center: { x: 600, y: 300 } }),
     ];
     const engine = new MotionEngine(FRAME, keyframes);
     const { viewport } = stepFor(engine, 2, 16, undefined);
@@ -55,7 +59,7 @@ describe("MotionEngine pan-follows-cursor", () => {
 
   it("a moving live cursor keeps the pan trailing it smoothly, staying within the frame", () => {
     const keyframes: ZoomKeyframe[] = [
-      { startT: 0, endT: 5_000_000, level: 2.5, center: { x: 960, y: 540 } },
+      kf({ startT: 0, endT: 5_000_000, level: 2.5, center: { x: 960, y: 540 } }),
     ];
     const engine = new MotionEngine(FRAME, keyframes);
     let t = 0;
@@ -82,14 +86,14 @@ describe("MotionEngine.setKeyframes", () => {
     // Idle — no keyframe covers t=1s yet, so level stays at 1x.
     expect(stepFor(engine, 1).viewport.width).toBeCloseTo(FRAME.width, 0);
 
-    engine.setKeyframes([{ startT: 0, endT: 5_000_000, level: 2, center: { x: 960, y: 540 } }]);
+    engine.setKeyframes([kf({ startT: 0, endT: 5_000_000, level: 2, center: { x: 960, y: 540 } })]);
     const level = FRAME.width / stepFor(engine, 3).viewport.width;
     expect(level).toBeGreaterThan(1.5);
   });
 
   it("shortening a keyframe's window (a timeline trim) takes effect on the same, already-running engine", () => {
     const engine = new MotionEngine(FRAME, [
-      { startT: 0, endT: 5_000_000, level: 2, center: { x: 960, y: 540 } },
+      kf({ startT: 0, endT: 5_000_000, level: 2, center: { x: 960, y: 540 } }),
     ]);
     // Settle into the zoom.
     stepFor(engine, 2);
@@ -99,7 +103,7 @@ describe("MotionEngine.setKeyframes", () => {
     // Trim the keyframe so it now ends *before* the current time (2s) —
     // simulating a timeline edit shortening it while playback is already
     // past the new end. No `reset()` — this must apply live.
-    engine.setKeyframes([{ startT: 0, endT: 1_000_000, level: 2, center: { x: 960, y: 540 } }]);
+    engine.setKeyframes([kf({ startT: 0, endT: 1_000_000, level: 2, center: { x: 960, y: 540 } })]);
 
     let t = 2_000_000;
     let level = zoomedLevel;
@@ -115,7 +119,7 @@ describe("MotionEngine.setKeyframes", () => {
 describe("MotionEngine stability under large/janky dt", () => {
   it("a single huge dt (simulating a dropped-frame hitch) doesn't overshoot past the target", () => {
     const keyframes: ZoomKeyframe[] = [
-      { startT: 0, endT: 5_000_000, level: 3, center: { x: 960, y: 540 } },
+      kf({ startT: 0, endT: 5_000_000, level: 3, center: { x: 960, y: 540 } }),
     ];
     const engine = new MotionEngine(FRAME, keyframes);
     // First tick establishes lastT; second tick simulates a huge stall
@@ -133,7 +137,7 @@ describe("MotionEngine stability under large/janky dt", () => {
 
   it("repeated jittery dt (alternating tiny and large steps) never explodes the viewport", () => {
     const keyframes: ZoomKeyframe[] = [
-      { startT: 0, endT: 5_000_000, level: 2.5, center: { x: 960, y: 540 } },
+      kf({ startT: 0, endT: 5_000_000, level: 2.5, center: { x: 960, y: 540 } }),
     ];
     const engine = new MotionEngine(FRAME, keyframes);
     let t = 0;

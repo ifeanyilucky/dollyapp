@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CursorTrack } from "../bundle/types";
-import { generateZoomKeyframes, viewportForKeyframe } from "./autoZoom";
+import { DEFAULT_ZOOM_KEYFRAME_EXTRAS, generateZoomKeyframes, viewportForKeyframe, type ZoomKeyframe } from "./autoZoom";
 
 function track(overrides: Partial<CursorTrack>): CursorTrack {
   return {
@@ -11,6 +11,10 @@ function track(overrides: Partial<CursorTrack>): CursorTrack {
     events: [],
     ...overrides,
   };
+}
+
+function kf(overrides: Pick<ZoomKeyframe, "startT" | "endT" | "level" | "center">): ZoomKeyframe {
+  return { ...DEFAULT_ZOOM_KEYFRAME_EXTRAS, ...overrides };
 }
 
 describe("generateZoomKeyframes", () => {
@@ -68,7 +72,7 @@ describe("generateZoomKeyframes", () => {
 describe("viewportForKeyframe", () => {
   it("stays inside frame bounds when the cluster center is near a corner", () => {
     const viewport = viewportForKeyframe(
-      { startT: 0, endT: 0, level: 2, center: { x: 0, y: 0 } },
+      kf({ startT: 0, endT: 0, level: 2, center: { x: 0, y: 0 } }),
       { width: 1920, height: 1080 },
     );
     expect(viewport.x).toBeGreaterThanOrEqual(0);
@@ -79,7 +83,7 @@ describe("viewportForKeyframe", () => {
 
   it("matches the source frame's own aspect when outputAspect is omitted", () => {
     const viewport = viewportForKeyframe(
-      { startT: 0, endT: 0, level: 1, center: { x: 960, y: 540 } },
+      kf({ startT: 0, endT: 0, level: 1, center: { x: 960, y: 540 } }),
       { width: 1920, height: 1080 },
     );
     expect(viewport.width).toBeCloseTo(1920);
@@ -89,7 +93,7 @@ describe("viewportForKeyframe", () => {
   it("reframes to a vertical crop of a landscape source when outputAspect is given", () => {
     const frame = { width: 1920, height: 1080 };
     const viewport = viewportForKeyframe(
-      { startT: 0, endT: 0, level: 1, center: { x: 960, y: 540 } },
+      kf({ startT: 0, endT: 0, level: 1, center: { x: 960, y: 540 } }),
       frame,
       9 / 16,
     );
@@ -104,7 +108,7 @@ describe("viewportForKeyframe", () => {
 
   it("keeps a reframed viewport at the requested aspect while zoomed in", () => {
     const viewport = viewportForKeyframe(
-      { startT: 0, endT: 0, level: 2, center: { x: 960, y: 540 } },
+      kf({ startT: 0, endT: 0, level: 2, center: { x: 960, y: 540 } }),
       { width: 1920, height: 1080 },
       9 / 16,
     );

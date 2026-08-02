@@ -32,7 +32,35 @@ export interface ZoomKeyframe {
   endT: number;
   level: number;
   center: { x: number; y: number };
+  /** "auto" (default): pan continuously trails the live cursor while this
+   * keyframe is active (see `MotionEngine.targetAt`). "manual": pan stays
+   * fixed at `center`, ignoring the live cursor entirely. */
+  panMode: "auto" | "manual";
+  /** Skips the spring easing for this keyframe's zoom/pan — snaps
+   * straight to the target instead of transitioning into it. */
+  instantAnimation: boolean;
+  /** Treated as if this keyframe didn't exist — playback stays at 1x
+   * frame-center through its time window instead of zooming. */
+  disabled: boolean;
+  /** 0-100. How hard the viewport is kept fully inside the source frame.
+   * 100 (default): never crosses the edge, matching the original
+   * behavior. Lower values let the crop drift past the frame edge when
+   * `center` is near it, revealing the canvas background in the gap
+   * instead of forcing the whole crop back on-frame — see
+   * `viewportForKeyframe`. */
+  snapToEdges: number;
 }
+
+/** Fields every generated/split/merged keyframe gets when nothing more
+ * specific overrides them — kept in one place so `generateZoomKeyframes`,
+ * `mergeKeyframes`, and `splitKeyframeAt` can't drift out of sync on what
+ * "default" means. */
+export const DEFAULT_ZOOM_KEYFRAME_EXTRAS = {
+  panMode: "auto" as const,
+  instantAnimation: false,
+  disabled: false,
+  snapToEdges: 100,
+};
 
 export interface AutoZoomSensitivity {
   /** Multiplies the default anchor-clustering distance/time windows.
@@ -171,6 +199,11 @@ function mergeKeyframes(a: ZoomKeyframe, b: ZoomKeyframe): ZoomKeyframe {
   const bWeight = b.endT - b.startT;
   const totalWeight = aWeight + bWeight || 1;
   return {
+    // Both inputs are always freshly generated (still at their defaults)
+    // at the point this runs — merging happens before any editing UI ever
+    // sees these keyframes — so keeping `a`'s copy of every per-keyframe
+    // override is as good as any other choice here.
+    ...a,
     startT: Math.min(a.startT, b.startT),
     endT: Math.max(a.endT, b.endT),
     level: Math.min(a.level, b.level),
@@ -198,6 +231,7 @@ export function generateZoomKeyframes(
       endT: last.t + BASE.trailUs,
       level: levelForSpread(clusterSpread(cluster)),
       center: centroid(cluster),
+      ...DEFAULT_ZOOM_KEYFRAME_EXTRAS,
     };
   });
 
@@ -229,16 +263,19 @@ export function generateZoomKeyframes(
 }
 
 /**
- * Viewport rect for a zoom keyframe, kept inside frame bounds — the pan
- * never crosses the screen edge, even for a cluster centered near a
- * corner. `outputAspect` (width/height), if given, reframes the viewport
- * to that aspect instead of the source frame's own — the largest
- * same-aspect rect centered in `frame` at level 1, shrinking (still at
- * that aspect) as `level` increases. This is what lets a 16:9 recording
- * export as a 9:16 vertical crop that actually follows the cursor, rather
- * than a 16:9 crop letterboxed inside a taller canvas. Omitted, it falls
- * back to the source frame's own aspect (unchanged pre-existing
- * behavior).
+ * Viewport rect for a zoom keyframe. `outputAspect` (width/height), if
+ * given, reframes the viewport to that aspect instead of the source
+ * frame's own — the largest same-aspect rect centered in `frame` at level
+ * 1, shrinking (still at that aspect) as `level` increases. This is what
+ * lets a 16:9 recording export as a 9:16 vertical crop that actually
+ * follows the cursor, rather than a 16:9 crop letterboxed inside a taller
+ * canvas. Omitted, it falls back to the source frame's own aspect
+ * (unchanged pre-existing behavior).
+ *
+ * `snapToEdges` (`kf.snapToEdges`, 0-100) blends between the raw,
+ * un-clamped position (0 — the crop can drift past the frame edge when
+ * `center` is near it, letting the renderer's background show through the
+ * gap) and fully kept on-frame (100, the original always-on behavior).
  */
 export function viewportForKeyframe(
   kf: ZoomKeyframe,
@@ -256,8 +293,30 @@ export function viewportForKeyframe(
   const width = baseWidth / kf.level;
   const height = baseHeight / kf.level;
 
-  const x = clamp(kf.center.x - width / 2, 0, Math.max(0, frame.width - width));
-  const y = clamp(kf.center.y - height / 2, 0, Math.max(0, frame.height - height));
+  const rawX = kf.center.x - width / 2;
+  const rawY = kf.center.y - height / 2;
+  const clampedX = clamp(rawX, 0, Math.max(0, frame.width - width));
+  const clampedY = clamp(rawY, 0, Math.max(0, frame.height - height));
+
+  const snap = clamp((kf.snapToEdges ?? 100) / 100, 0, 1);
+  const x = rawX + (clampedX - rawX) * snap;
+  const y = rawY + (clampedY - rawY) * snap;
 
   return { x, y, width, height };
+}
+
+/** Splits `keyframes[index]` into two at `atT` (absolute µs, same epoch as
+ * `startT`/`endT` — the caller converts from video-relative seconds via
+ * `videoStartUs`), both copies keeping the original's level/center/mode/
+ * etc. A no-op if `atT` doesn't fall strictly inside that keyframe. */
+export function splitKeyframeAt(
+  keyframes: ZoomKeyframe[],
+  index: number,
+  atT: number,
+): ZoomKeyframe[] {
+  const original = keyframes[index];
+  if (!original || atT <= original.startT || atT >= original.endT) return keyframes;
+  const first: ZoomKeyframe = { ...original, endT: atT };
+  const second: ZoomKeyframe = { ...original, startT: atT };
+  return [...keyframes.slice(0, index), first, second, ...keyframes.slice(index + 1)];
 }

@@ -98,20 +98,37 @@ export class MotionEngine {
   private targetAt(
     tUs: number,
     livePosition?: { x: number; y: number },
-  ): { level: number; center: { x: number; y: number } } {
-    const active = this.keyframes.find((kf) => tUs >= kf.startT && tUs <= kf.endT);
+  ): {
+    level: number;
+    center: { x: number; y: number };
+    instantAnimation: boolean;
+    snapToEdges: number;
+  } {
+    // `disabled` keyframes are skipped entirely, as if they weren't in
+    // the list — playback just stays at the base 1x/frame-center target.
+    const active = this.keyframes.find((kf) => !kf.disabled && tUs >= kf.startT && tUs <= kf.endT);
     if (active) {
-      // The keyframe decides *when* to zoom and *how far*; while it's
-      // active, pan continuously trails the live cursor instead of
-      // holding at the cluster's fixed centroid — a static hold reads as
-      // "zoomed near the action," a live follow reads as "focused on the
-      // action," which is the actual ask. Falls back to the keyframe's
-      // own center if no live position is available (e.g. export frames
-      // that don't carry it — see viewportForKeyframe's clamping, which
-      // still keeps this on-frame either way).
-      return { level: active.level, center: livePosition ?? active.center };
+      // "auto" (the default): pan continuously trails the live cursor
+      // instead of holding at the cluster's fixed centroid — a static
+      // hold reads as "zoomed near the action," a live follow reads as
+      // "focused on the action," which is the actual ask. Falls back to
+      // the keyframe's own center if no live position is available (e.g.
+      // export frames that don't carry it) or the keyframe is pinned to
+      // "manual" mode, which ignores the live cursor on purpose.
+      const center = active.panMode === "manual" ? active.center : (livePosition ?? active.center);
+      return {
+        level: active.level,
+        center,
+        instantAnimation: active.instantAnimation,
+        snapToEdges: active.snapToEdges,
+      };
     }
-    return { level: 1, center: { x: this.frame.width / 2, y: this.frame.height / 2 } };
+    return {
+      level: 1,
+      center: { x: this.frame.width / 2, y: this.frame.height / 2 },
+      instantAnimation: false,
+      snapToEdges: 100,
+    };
   }
 
   /** `tUs`: microseconds since the recording's clock epoch, matching
@@ -131,17 +148,25 @@ export class MotionEngine {
     this.lastT = tUs;
 
     const target = this.targetAt(tUs, livePosition);
-    // Pan and zoom now use deliberately different spring stiffness — see
-    // PAN_SPRING's doc comment for why sharing one clock stopped being
-    // the right call once pan started continuously chasing the live
-    // cursor instead of jumping once between two fixed points.
-    let remaining = totalDt;
-    while (remaining > 0) {
-      const step = Math.min(remaining, MAX_SPRING_STEP_SECONDS);
-      this.levelSpring = stepSpring(this.levelSpring, target.level, step, ZOOM_LEVEL_SPRING);
-      this.centerXSpring = stepSpring(this.centerXSpring, target.center.x, step, PAN_SPRING);
-      this.centerYSpring = stepSpring(this.centerYSpring, target.center.y, step, PAN_SPRING);
-      remaining -= step;
+    if (target.instantAnimation) {
+      // Skips the spring entirely — snaps straight to the target instead
+      // of easing into it, for as long as this keyframe stays active.
+      this.levelSpring = { value: target.level, velocity: 0 };
+      this.centerXSpring = { value: target.center.x, velocity: 0 };
+      this.centerYSpring = { value: target.center.y, velocity: 0 };
+    } else {
+      // Pan and zoom now use deliberately different spring stiffness —
+      // see PAN_SPRING's doc comment for why sharing one clock stopped
+      // being the right call once pan started continuously chasing the
+      // live cursor instead of jumping once between two fixed points.
+      let remaining = totalDt;
+      while (remaining > 0) {
+        const step = Math.min(remaining, MAX_SPRING_STEP_SECONDS);
+        this.levelSpring = stepSpring(this.levelSpring, target.level, step, ZOOM_LEVEL_SPRING);
+        this.centerXSpring = stepSpring(this.centerXSpring, target.center.x, step, PAN_SPRING);
+        this.centerYSpring = stepSpring(this.centerYSpring, target.center.y, step, PAN_SPRING);
+        remaining -= step;
+      }
     }
 
     const resolved: ZoomKeyframe = {
@@ -149,6 +174,10 @@ export class MotionEngine {
       endT: 0,
       level: this.levelSpring.value,
       center: { x: this.centerXSpring.value, y: this.centerYSpring.value },
+      panMode: "auto",
+      instantAnimation: false,
+      disabled: false,
+      snapToEdges: target.snapToEdges,
     };
     return { viewport: viewportForKeyframe(resolved, this.frame, this.outputAspect) };
   }
