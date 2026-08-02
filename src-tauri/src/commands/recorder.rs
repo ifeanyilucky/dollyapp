@@ -1,6 +1,7 @@
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::recorder::{self, RecorderState};
+use crate::toolbar;
 
 /// Lets the UI pick up state changed elsewhere (tray menu, global
 /// shortcut) — e.g. on mount, or after the window regains focus.
@@ -41,4 +42,27 @@ pub fn resume_recording(app: AppHandle, state: State<'_, RecorderState>) -> Resu
 #[tauri::command]
 pub fn set_mic_enabled(state: State<'_, RecorderState>, enabled: bool) {
     recorder::set_mic_enabled(&state, enabled);
+}
+
+/// Called once, by `PermissionsGate`'s `onGranted`, right after Screen
+/// Recording permission is granted for the first time — hides the regular
+/// window (which was showing the permission flow) and shows the floating
+/// toolbar, entering the app's normal steady state.
+#[tauri::command]
+pub fn enter_toolbar_mode(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    toolbar::show(&app).map_err(|e| e.to_string())
+}
+
+/// Called when the editor closes (including after deleting a recording) —
+/// the reverse of the swap `recorder::stop` performs when a recording
+/// finishes.
+#[tauri::command]
+pub fn return_to_toolbar(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    toolbar::show(&app).map_err(|e| e.to_string())
 }

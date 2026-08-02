@@ -10,6 +10,7 @@ pub mod fs;
 pub mod permissions;
 pub mod recorder;
 mod shortcut;
+mod toolbar;
 mod tray;
 
 pub fn run() {
@@ -42,6 +43,8 @@ pub fn run() {
             commands::load_recording,
             commands::reveal_in_finder,
             commands::delete_recording,
+            commands::enter_toolbar_mode,
+            commands::return_to_toolbar,
         ])
         .manage(recorder::RecorderState::default())
         .setup(|app| {
@@ -50,7 +53,16 @@ pub fn run() {
             tray::setup(app.handle())?;
             shortcut::setup(app.handle())?;
 
-            if let Some(window) = app.get_webview_window("main") {
+            // Once Screen Recording is granted, the floating toolbar (not
+            // the regular window) is the app's primary UI — see
+            // `toolbar`'s doc comment. On a fresh install it isn't granted
+            // yet, so fall back to the regular window for the first-run
+            // permission flow; the frontend calls `enter_toolbar_mode`
+            // once that flow finishes (see `PermissionsGate`'s `onGranted`).
+            if permissions::screen_recording_status() == permissions::PermissionStatus::Authorized
+            {
+                toolbar::show(app.handle())?;
+            } else if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
             }
             Ok(())

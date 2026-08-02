@@ -224,6 +224,21 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
         active.bundle_dir.display()
     );
 
+    // The floating toolbar (where recording starts/stops) and the editor
+    // (which shows the result) are different windows — swap which one's
+    // visible regardless of whether this `stop` came from the toolbar's
+    // own Stop button, the tray menu, or the global shortcut, so all
+    // three end up in the same place afterward.
+    let _ = app.emit(
+        super::RECORDING_FINISHED_EVENT,
+        active.bundle_dir.display().to_string(),
+    );
+    crate::toolbar::hide(app);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+
     Ok(active.bundle_dir)
 }
 
