@@ -56,13 +56,25 @@ export class MotionEngine {
   private centerXSpring: SpringState;
   private centerYSpring: SpringState;
   private lastT = 0;
+  /** Width/height of the desired *output* framing — see
+   * `viewportForKeyframe`'s doc comment. `undefined` keeps the source
+   * frame's own aspect (the pre-aspect-ratio-switcher default). */
+  private outputAspect: number | undefined;
 
-  constructor(frame: FrameSize, keyframes: ZoomKeyframe[]) {
+  constructor(frame: FrameSize, keyframes: ZoomKeyframe[], outputAspect?: number) {
     this.frame = frame;
     this.keyframes = keyframes;
+    this.outputAspect = outputAspect;
     this.levelSpring = { value: 1, velocity: 0 };
     this.centerXSpring = { value: frame.width / 2, velocity: 0 };
     this.centerYSpring = { value: frame.height / 2, velocity: 0 };
+  }
+
+  /** Called live when the user switches the output aspect ratio — no
+   * spring/keyframe state is reset, so the crop reshapes in place rather
+   * than restarting playback's motion. */
+  setOutputAspect(aspect: number | undefined): void {
+    this.outputAspect = aspect;
   }
 
   /** Call after a scrub/seek so the next `transformAt` doesn't treat the
@@ -126,7 +138,7 @@ export class MotionEngine {
       level: this.levelSpring.value,
       center: { x: this.centerXSpring.value, y: this.centerYSpring.value },
     };
-    return { viewport: viewportForKeyframe(resolved, this.frame) };
+    return { viewport: viewportForKeyframe(resolved, this.frame, this.outputAspect) };
   }
 }
 
@@ -136,7 +148,8 @@ export function createMotionEngine(
   track: CursorTrack,
   frame: FrameSize,
   sensitivity?: AutoZoomSensitivity,
+  outputAspect?: number,
 ): MotionEngine {
   const keyframes = generateZoomKeyframes(track, sensitivity);
-  return new MotionEngine(frame, keyframes);
+  return new MotionEngine(frame, keyframes, outputAspect);
 }

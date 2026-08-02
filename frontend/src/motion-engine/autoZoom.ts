@@ -231,11 +231,30 @@ export function generateZoomKeyframes(
 /**
  * Viewport rect for a zoom keyframe, kept inside frame bounds — the pan
  * never crosses the screen edge, even for a cluster centered near a
- * corner.
+ * corner. `outputAspect` (width/height), if given, reframes the viewport
+ * to that aspect instead of the source frame's own — the largest
+ * same-aspect rect centered in `frame` at level 1, shrinking (still at
+ * that aspect) as `level` increases. This is what lets a 16:9 recording
+ * export as a 9:16 vertical crop that actually follows the cursor, rather
+ * than a 16:9 crop letterboxed inside a taller canvas. Omitted, it falls
+ * back to the source frame's own aspect (unchanged pre-existing
+ * behavior).
  */
-export function viewportForKeyframe(kf: ZoomKeyframe, frame: FrameSize): Viewport {
-  const width = frame.width / kf.level;
-  const height = frame.height / kf.level;
+export function viewportForKeyframe(
+  kf: ZoomKeyframe,
+  frame: FrameSize,
+  outputAspect?: number,
+): Viewport {
+  const aspect = outputAspect ?? frame.width / frame.height;
+  let baseWidth = frame.width;
+  let baseHeight = baseWidth / aspect;
+  if (baseHeight > frame.height) {
+    baseHeight = frame.height;
+    baseWidth = baseHeight * aspect;
+  }
+
+  const width = baseWidth / kf.level;
+  const height = baseHeight / kf.level;
 
   const x = clamp(kf.center.x - width / 2, 0, Math.max(0, frame.width - width));
   const y = clamp(kf.center.y - height / 2, 0, Math.max(0, frame.height - height));

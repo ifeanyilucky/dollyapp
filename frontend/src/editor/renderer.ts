@@ -31,6 +31,10 @@ export interface SceneRendererOptions {
    * sample/event position up front so the rest of this class can treat
    * `cursorTrack` as already being in video-local space. */
   origin?: { x: number; y: number };
+  /** Width/height of the desired output framing — see
+   * `viewportForKeyframe`'s doc comment. `undefined` keeps the source
+   * recording's own aspect. */
+  outputAspect?: number;
 }
 
 /** Re-anchors every position-bearing sample/event in `track` from global
@@ -62,6 +66,11 @@ export class SceneRenderer {
   private events: CursorEvent[];
   private scaleFactor: number;
   private videoAspect: number;
+  /** Mirrors `SceneRendererOptions.outputAspect` — kept in sync with the
+   * motion engine's own copy (see `setOutputAspect`) since `contentRect`
+   * needs it too: the drawn region now has *this* aspect (the viewport's),
+   * not the source video's, whenever it's set. */
+  private outputAspect: number | undefined;
   // `shadowBlur` is one of the more expensive things Canvas2D can do —
   // recomputing a full-size blurred rect every frame was enough to make
   // rendering janky, which fed directly into spring instability (a slow
@@ -84,8 +93,9 @@ export class SceneRenderer {
   constructor(opts: SceneRendererOptions) {
     this.scaleFactor = opts.scaleFactor;
     this.videoAspect = opts.frame.width / opts.frame.height;
+    this.outputAspect = opts.outputAspect;
     const cursorTrack = shiftCursorTrack(opts.cursorTrack, opts.origin ?? { x: 0, y: 0 });
-    this.motionEngine = createMotionEngine(cursorTrack, opts.frame);
+    this.motionEngine = createMotionEngine(cursorTrack, opts.frame, undefined, opts.outputAspect);
     this.smoothedSamples = smoothCursorTrack(cursorTrack.samples);
     this.events = cursorTrack.events;
   }
@@ -94,6 +104,13 @@ export class SceneRenderer {
    * elapsed playback time (see `MotionEngine.reset`). */
   resetAt(tUs: number): void {
     this.motionEngine.reset(tUs);
+  }
+
+  /** Switches the output aspect ratio live — see
+   * `SceneRendererOptions.outputAspect`'s doc comment. */
+  setOutputAspect(aspect: number | undefined): void {
+    this.outputAspect = aspect;
+    this.motionEngine.setOutputAspect(aspect);
   }
 
   /** `tUs`: microseconds since the recording's clock epoch — see
@@ -165,17 +182,20 @@ export class SceneRenderer {
   }
 
   /** Video content rect, centered in the canvas and inset by `padding` on
-   * all sides while preserving the recording's own aspect ratio (padding
-   * shrinks the video, it doesn't stretch it). */
+   * all sides while preserving the drawn region's own aspect ratio
+   * (padding shrinks the video, it doesn't stretch it) — that's
+   * `outputAspect` when set, since the viewport is reframed to match it
+   * (see `viewportForKeyframe`), not the source recording's own aspect. */
   private contentRect(canvasWidth: number, canvasHeight: number, padding: number): Rect {
+    const aspect = this.outputAspect ?? this.videoAspect;
     const availWidth = Math.max(canvasWidth - padding * 2, 1);
     const availHeight = Math.max(canvasHeight - padding * 2, 1);
 
     let width = availWidth;
-    let height = width / this.videoAspect;
+    let height = width / aspect;
     if (height > availHeight) {
       height = availHeight;
-      width = height * this.videoAspect;
+      width = height * aspect;
     }
 
     return { x: (canvasWidth - width) / 2, y: (canvasHeight - height) / 2, width, height };

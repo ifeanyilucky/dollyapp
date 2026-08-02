@@ -76,4 +76,38 @@ describe("viewportForKeyframe", () => {
     expect(viewport.x + viewport.width).toBeLessThanOrEqual(1920 + 1e-9);
     expect(viewport.y + viewport.height).toBeLessThanOrEqual(1080 + 1e-9);
   });
+
+  it("matches the source frame's own aspect when outputAspect is omitted", () => {
+    const viewport = viewportForKeyframe(
+      { startT: 0, endT: 0, level: 1, center: { x: 960, y: 540 } },
+      { width: 1920, height: 1080 },
+    );
+    expect(viewport.width).toBeCloseTo(1920);
+    expect(viewport.height).toBeCloseTo(1080);
+  });
+
+  it("reframes to a vertical crop of a landscape source when outputAspect is given", () => {
+    const frame = { width: 1920, height: 1080 };
+    const viewport = viewportForKeyframe(
+      { startT: 0, endT: 0, level: 1, center: { x: 960, y: 540 } },
+      frame,
+      9 / 16,
+    );
+    // The largest 9:16 rect that fits inside a 1920x1080 frame is
+    // full-height, narrower than the frame — not the frame's own 16:9.
+    expect(viewport.height).toBeCloseTo(1080);
+    expect(viewport.width).toBeCloseTo(1080 * (9 / 16));
+    expect(viewport.width).toBeLessThan(frame.width);
+    // Centered horizontally on the (frame-center) keyframe.
+    expect(viewport.x).toBeCloseTo((frame.width - viewport.width) / 2);
+  });
+
+  it("keeps a reframed viewport at the requested aspect while zoomed in", () => {
+    const viewport = viewportForKeyframe(
+      { startT: 0, endT: 0, level: 2, center: { x: 960, y: 540 } },
+      { width: 1920, height: 1080 },
+      9 / 16,
+    );
+    expect(viewport.width / viewport.height).toBeCloseTo(9 / 16);
+  });
 });

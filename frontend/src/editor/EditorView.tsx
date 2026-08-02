@@ -1,6 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { generateZoomKeyframes } from "../motion-engine";
+import { aspectRatioPreset, type AspectRatioId } from "./aspect";
 import { deleteRecording, loadRecording, revealInFinder, type LoadedRecording } from "./api";
 import { IconRail } from "./IconRail";
 import { SceneRenderer } from "./renderer";
@@ -10,14 +11,15 @@ import { Timeline } from "./Timeline";
 import { nextPlaybackRate, TopBar } from "./TopBar";
 
 const MAX_PREVIEW_WIDTH = 760;
+const MAX_PREVIEW_HEIGHT = 560;
 
 /**
  * Post-recording preview: plays `screen.mov` through the same motion
  * engine export will eventually use (ARCHITECTURE.md, "preview and export
  * must never diverge"), with auto-generated zoom/pan that follows the live
- * cursor, an animated cursor overlay, and background/padding/shadow
- * styling. No aspect-ratio switching, trim/cut, or true export (motion
- * baked into an output file) yet.
+ * cursor, an animated cursor overlay, background/padding/shadow styling,
+ * and an output aspect ratio switch. No trim/cut/speed-ramping or true
+ * export (motion baked into an output file) yet.
  */
 export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClose: () => void }) {
   const [loaded, setLoaded] = useState<LoadedRecording | null>(null);
@@ -28,6 +30,7 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   const [style, setStyle] = useState<StyleSettings>(DEFAULT_STYLE);
   const [showCursor, setShowCursor] = useState(true);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [aspectRatioId, setAspectRatioId] = useState<AspectRatioId>("original");
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -60,7 +63,10 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
   // Build the renderer once the bundle's loaded — cursor coordinates are
   // in point space, so the motion engine gets point-space frame
   // dimensions, not the video's actual pixel dimensions (ARCHITECTURE.md,
-  // "Recording format").
+  // "Recording format"). Deliberately *not* keyed on `aspectRatioId` —
+  // switching it later goes through `renderer.setOutputAspect` instead
+  // (see the effect below), so it reshapes in place rather than
+  // recreating the renderer and resetting playback.
   useEffect(() => {
     if (!loaded) return;
     const { widthPx, heightPx, scaleFactor, originX, originY } = loaded.meta.display;
@@ -69,9 +75,18 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
       scaleFactor,
       cursorTrack: loaded.cursorTrack,
       origin: { x: originX, y: originY },
+      outputAspect: aspectRatioPreset(aspectRatioId).ratio ?? undefined,
     });
     rendererRef.current.resetAt(loaded.meta.videoStartUs);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
+
+  // Live aspect-ratio switch — reshapes the existing renderer's viewport
+  // instead of rebuilding it (see the effect above).
+  useEffect(() => {
+    if (!loaded) return;
+    rendererRef.current?.setOutputAspect(aspectRatioPreset(aspectRatioId).ratio ?? undefined);
+  }, [loaded, aspectRatioId]);
 
   // Same keyframes SceneRenderer generates internally, recomputed here
   // purely for the timeline's zoom-track visualization — cheap pure
@@ -151,15 +166,24 @@ export function EditorView({ bundlePath, onClose }: { bundlePath: string; onClos
     );
   }
 
-  const aspect = loaded.meta.display.widthPx / loaded.meta.display.heightPx;
-  const canvasWidth = Math.min(MAX_PREVIEW_WIDTH, loaded.meta.display.widthPx);
-  const canvasHeight = Math.round(canvasWidth / aspect);
+  const sourceAspect = loaded.meta.display.widthPx / loaded.meta.display.heightPx;
+  const outputAspect = aspectRatioPreset(aspectRatioId).ratio ?? sourceAspect;
+  // Fit the output shape within a max box both ways — a vertical/square
+  // aspect needs a height cap too, not just the width cap a landscape
+  // recording alone would ever hit.
+  let canvasWidth = Math.min(MAX_PREVIEW_WIDTH, loaded.meta.display.widthPx);
+  let canvasHeight = Math.round(canvasWidth / outputAspect);
+  if (canvasHeight > MAX_PREVIEW_HEIGHT) {
+    canvasHeight = MAX_PREVIEW_HEIGHT;
+    canvasWidth = Math.round(canvasHeight * outputAspect);
+  }
 
   return (
     <div className="flex h-screen w-screen flex-col bg-neutral-950 text-neutral-300">
       <TopBar
         title={bundlePath.split("/").pop() ?? bundlePath}
-        aspectLabel={aspect >= 1 ? "Wide 16:9" : "Vertical 9:16"}
+        aspectRatioId={aspectRatioId}
+        onChangeAspectRatio={setAspectRatioId}
         showCursor={showCursor}
         onToggleCursor={() => setShowCursor((v) => !v)}
         playbackRate={playbackRate}

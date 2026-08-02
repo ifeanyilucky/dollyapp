@@ -1,4 +1,6 @@
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
+  ChevronDown,
   ChevronLeft,
   Crop,
   Eye,
@@ -12,21 +14,23 @@ import {
   Undo2,
   Upload,
 } from "lucide-react";
+import { ASPECT_RATIO_PRESETS, type AspectRatioId } from "./aspect";
 
 const SPEED_STEPS = [1, 1.5, 2, 0.5];
 
 /**
  * Top toolbar. Real actions: reveal-in-Finder, delete (confirms first),
- * cursor-overlay toggle, playback-speed cycling. Undo/redo and Presets
- * are inert — there's no edit-history system or preset library yet.
- * "Export" currently reveals the bundle in Finder rather than rendering
- * an output file — a true export (motion/style baked in) isn't built.
- * Aspect ratio / Crop / Mask are placeholders — switching aspect ratio is
- * a separate, larger feature (see project tasks).
+ * cursor-overlay toggle, playback-speed cycling, output aspect ratio
+ * (PRD §9, "Horizontal and vertical output"). Undo/redo and Presets are
+ * inert — there's no edit-history system or preset library yet. "Export"
+ * currently reveals the bundle in Finder rather than rendering an output
+ * file — a true export (motion/style baked in) isn't built. Crop / Mask
+ * are separate, larger features not covered here.
  */
 export function TopBar({
   title,
-  aspectLabel,
+  aspectRatioId,
+  onChangeAspectRatio,
   showCursor,
   onToggleCursor,
   playbackRate,
@@ -36,7 +40,8 @@ export function TopBar({
   onClose,
 }: {
   title: string;
-  aspectLabel: string;
+  aspectRatioId: AspectRatioId;
+  onChangeAspectRatio: (id: AspectRatioId) => void;
   showCursor: boolean;
   onToggleCursor: () => void;
   playbackRate: number;
@@ -141,9 +146,33 @@ export function TopBar({
       </div>
 
       <div className="flex items-center gap-2 px-4 pb-2.5">
-        <span className="flex items-center gap-1.5 rounded-md border border-neutral-800 px-2 py-1 text-[12px] text-neutral-400">
-          {aspectLabel}
-        </span>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <button
+              type="button"
+              className="flex items-center gap-1.5 rounded-md border border-neutral-800 px-2 py-1 text-[12px] text-neutral-400 hover:border-neutral-700 hover:text-neutral-200"
+            >
+              {ASPECT_RATIO_PRESETS.find((p) => p.id === aspectRatioId)?.label}
+              <ChevronDown className="h-3 w-3" />
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              sideOffset={6}
+              className="z-50 min-w-[160px] rounded-lg border border-neutral-800 bg-neutral-900 p-1 text-neutral-200 shadow-2xl [&_.aspect-item]:cursor-pointer [&_.aspect-item]:rounded-md [&_.aspect-item]:px-2.5 [&_.aspect-item]:py-1.5 [&_.aspect-item]:text-[12px] [&_.aspect-item]:outline-none [&_.aspect-item[data-highlighted]]:bg-neutral-800"
+            >
+              {ASPECT_RATIO_PRESETS.map((p) => (
+                <DropdownMenu.Item
+                  key={p.id}
+                  className={`aspect-item ${p.id === aspectRatioId ? "text-indigo-400" : ""}`}
+                  onSelect={() => onChangeAspectRatio(p.id)}
+                >
+                  {p.label}
+                </DropdownMenu.Item>
+              ))}
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
         <span
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-neutral-600"
           title="Crop — not available yet"
