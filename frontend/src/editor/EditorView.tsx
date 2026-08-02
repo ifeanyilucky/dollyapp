@@ -1,12 +1,13 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { generateZoomKeyframes } from "../motion-engine";
-import { loadRecording, revealInFinder, type LoadedRecording } from "./api";
+import { deleteRecording, loadRecording, revealInFinder, type LoadedRecording } from "./api";
+import { IconRail } from "./IconRail";
 import { SceneRenderer } from "./renderer";
 import { StylePanel } from "./StylePanel";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
 import { Timeline } from "./Timeline";
-import { TopBar } from "./TopBar";
+import { nextPlaybackRate, TopBar } from "./TopBar";
 
 const MAX_PREVIEW_WIDTH = 760;
 
