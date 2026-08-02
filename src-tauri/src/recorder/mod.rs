@@ -19,3 +19,10 @@ pub use macos::{
 /// `start`/`stop` so the frontend stays in sync when recording is toggled
 /// from the tray menu or the global shortcut instead of the UI.
 pub const RECORDING_STATE_EVENT: &str = "recording-state-changed";
+
+/// Tauri event name, payload the finished bundle's path (string). Emitted
+/// by `stop` — the floating toolbar (where recording is started/stopped)
+/// and the editor (which opens the result) are separate windows/webviews,
+/// so this is how the "main" window learns which bundle to open, however
+/// the stop was triggered (toolbar button, tray menu, or global shortcut).
+pub const RECORDING_FINISHED_EVENT: &str = "recording-finished";
