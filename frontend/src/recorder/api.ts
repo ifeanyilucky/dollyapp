@@ -38,6 +38,13 @@ export function stopRecording(): Promise<string> {
   return invoke("stop_recording");
 }
 
+/** Throws away the in-progress recording instead of saving it — unlike
+ * `stopRecording`, the toolbar stays put (ready to record again)
+ * rather than swapping to the editor. */
+export function discardRecording(): Promise<void> {
+  return invoke("discard_recording");
+}
+
 export function pauseRecording(): Promise<void> {
   return invoke("pause_recording");
 }
