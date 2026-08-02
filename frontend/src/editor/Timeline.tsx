@@ -51,6 +51,7 @@ export function Timeline({
   clipEndS,
   onTrimVideoClip,
   onChangeZoomKeyframes,
+  onCommitChange,
   slices,
   onSplitClip,
   onSelectSlice,
@@ -70,8 +71,19 @@ export function Timeline({
    * amber bar's trimmed range. */
   clipStartS: number;
   clipEndS: number;
+  /** Live update, called continuously while dragging a trim handle — pairs
+   * with `onCommitChange` below. */
   onTrimVideoClip: (startS: number, endS: number) => void;
+  /** Live update, called continuously while dragging a zoom keyframe (move
+   * or trim) — pairs with `onCommitChange` below. */
   onChangeZoomKeyframes: (keyframes: ZoomKeyframe[]) => void;
+  /** Turns whatever's accumulated since the last commit into a single undo
+   * step (see `history.ts`) — called once per drag, on release, from
+   * `beginDrag`'s `handleEnd`, regardless of which of the three drag kinds
+   * (video trim, zoom move, zoom trim) it was. A no-op if the drag never
+   * actually changed anything (a plain click), since the history hook
+   * itself no-ops a commit with nothing pending. */
+  onCommitChange: () => void;
   slices: ClipSlice[];
   onSplitClip: (atS: number) => void;
   onSelectSlice: (id: string) => void;
@@ -160,6 +172,10 @@ export function Timeline({
       if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
       setActiveDrag(null);
       if (onClick && maxMoved < CLICK_MOVE_THRESHOLD_PX) onClick();
+      // Collapses every `onMove` call from this drag into one undo step —
+      // harmless to call even for a plain click that never moved (no
+      // `onMove` ever fired, so there's nothing pending to commit).
+      onCommitChange();
     };
     target.addEventListener("pointermove", handleMove);
     target.addEventListener("pointerup", handleEnd);

@@ -14,6 +14,7 @@ export function Slider({
   max,
   step = 1,
   onChange,
+  onCommit,
   onReset,
   className,
 }: {
@@ -23,6 +24,12 @@ export function Slider({
   max: number;
   step?: number;
   onChange: (v: number) => void;
+  /** Fires once, when the drag ends (Radix's `onValueCommit`) — pairs with
+   * a history-aware `onChange` that only wants one undo step per drag
+   * rather than one per intermediate value. Optional: callers that don't
+   * need undo granularity (or aren't wired into history at all) can omit
+   * it. */
+  onCommit?: () => void;
   onReset?: () => void;
   className?: string;
 }) {
@@ -49,6 +56,7 @@ export function Slider({
         max={max}
         step={step}
         onValueChange={([v]) => onChange(v)}
+        onValueCommit={() => onCommit?.()}
       >
         <RadixSlider.Track className="relative h-[3px] flex-1 rounded-full bg-neutral-700">
           <RadixSlider.Range className="absolute h-full rounded-full bg-indigo-400" />

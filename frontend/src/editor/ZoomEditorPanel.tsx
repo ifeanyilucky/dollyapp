@@ -17,17 +17,31 @@ const MAX_ZOOM_LEVEL = 5;
 export function ZoomEditorPanel({
   keyframe,
   onChange,
+  onCommit,
   onApplyLevelToAll,
   onRemove,
   onClose,
 }: {
   keyframe: ZoomKeyframe;
+  /** Live update — called on every change, including every intermediate
+   * value during a slider drag. */
   onChange: (next: ZoomKeyframe) => void;
+  /** Turns whatever's accumulated since the last commit into a single undo
+   * step (see `history.ts`). Sliders (level, snap-to-edges) call this
+   * themselves once, on drag release; every discrete control here (pan
+   * mode, instant animation, disabled) calls it immediately after
+   * `onChange` via the local `set` helper. */
+  onCommit: () => void;
   onApplyLevelToAll: () => void;
   onRemove: () => void;
   onClose: () => void;
 }) {
   const [advancedExpanded, setAdvancedExpanded] = useState(false);
+
+  function set(next: ZoomKeyframe) {
+    onChange(next);
+    onCommit();
+  }
 
   return (
     <div className="flex w-[340px] shrink-0 flex-col gap-5 overflow-y-auto rounded-xl border border-neutral-800/80 bg-neutral-950/70 p-5">
@@ -51,7 +65,8 @@ export function ZoomEditorPanel({
           max={MAX_ZOOM_LEVEL}
           step={0.1}
           onChange={(level) => onChange({ ...keyframe, level })}
-          onReset={() => onChange({ ...keyframe, level: 2 })}
+          onCommit={onCommit}
+          onReset={() => set({ ...keyframe, level: 2 })}
         />
       </div>
 
@@ -71,7 +86,7 @@ export function ZoomEditorPanel({
         <div className="flex gap-1.5">
           <button
             type="button"
-            onClick={() => onChange({ ...keyframe, panMode: "auto" })}
+            onClick={() => set({ ...keyframe, panMode: "auto" })}
             className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] font-medium transition-colors ${
               keyframe.panMode === "auto"
                 ? "border-indigo-400 bg-neutral-900 text-neutral-50"
@@ -83,7 +98,7 @@ export function ZoomEditorPanel({
           </button>
           <button
             type="button"
-            onClick={() => onChange({ ...keyframe, panMode: "manual" })}
+            onClick={() => set({ ...keyframe, panMode: "manual" })}
             className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12px] font-medium transition-colors ${
               keyframe.panMode === "manual"
                 ? "border-indigo-400 bg-neutral-900 text-neutral-50"
@@ -108,13 +123,13 @@ export function ZoomEditorPanel({
         </div>
         <Toggle
           checked={keyframe.instantAnimation}
-          onChange={(v) => onChange({ ...keyframe, instantAnimation: v })}
+          onChange={(v) => set({ ...keyframe, instantAnimation: v })}
         />
       </div>
 
       <div className="flex items-center justify-between gap-4">
         <span className="text-[13px] font-medium text-neutral-200">Disable zoom</span>
-        <Toggle checked={keyframe.disabled} onChange={(v) => onChange({ ...keyframe, disabled: v })} />
+        <Toggle checked={keyframe.disabled} onChange={(v) => set({ ...keyframe, disabled: v })} />
       </div>
 
       <div>
@@ -145,7 +160,8 @@ export function ZoomEditorPanel({
               min={0}
               max={100}
               onChange={(snapToEdges) => onChange({ ...keyframe, snapToEdges })}
-              onReset={() => onChange({ ...keyframe, snapToEdges: 100 })}
+              onCommit={onCommit}
+              onReset={() => set({ ...keyframe, snapToEdges: 100 })}
             />
           </div>
         )}

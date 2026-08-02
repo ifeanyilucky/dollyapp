@@ -29,14 +29,34 @@ const COLOR_SWATCHES = ["#1e1b2e", "#0f172a", "#111111", "#f4f3ec", "#2d1b1b", "
 export function StylePanel({
   style,
   onChange,
+  onCommit,
 }: {
   style: StyleSettings;
+  /** Live update — called on every change, including every intermediate
+   * value during a slider drag. */
   onChange: (next: StyleSettings) => void;
+  /** Turns whatever's accumulated since the last commit into a single undo
+   * step (see `history.ts`). Sliders call this themselves once, on drag
+   * release; every discrete control here (a tab/swatch/button click) calls
+   * it immediately after `onChange` via the local `set` helper, so a
+   * one-off click is still exactly one undo step. */
+  onCommit: () => void;
 }) {
   const [category, setCategory] = useState<GradientCategory | "favorites">("macOS");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /** Discrete change: applies `value` and immediately commits it as one
+   * undo step. Sliders bypass this — they call `onChange` live and only
+   * `Slider`'s own `onCommit` (wired below) commits, once, on release. */
   function set<K extends keyof StyleSettings>(key: K, value: StyleSettings[K]) {
+    onChange({ ...style, [key]: value });
+    onCommit();
+  }
+
+  /** Live change for slider-driven fields — no commit here; the `Slider`
+   * itself calls `onCommit` once, on drag release (see its `onCommit`
+   * prop below), so a drag collapses into one undo step. */
+  function setLive<K extends keyof StyleSettings>(key: K, value: StyleSettings[K]) {
     onChange({ ...style, [key]: value });
   }
 
@@ -48,17 +68,20 @@ export function StylePanel({
   function pickRandomWallpaper() {
     const next = WALLPAPER_IMAGES[Math.floor(Math.random() * WALLPAPER_IMAGES.length)];
     onChange({ ...style, backgroundType: "wallpaper", wallpaperId: next.id });
+    onCommit();
   }
 
   function pickRandomGradient() {
     const next = GRADIENT_PRESETS[Math.floor(Math.random() * GRADIENT_PRESETS.length)];
     onChange({ ...style, backgroundType: "gradient", gradientId: next.id });
+    onCommit();
   }
 
   function handleFileChosen(file: File) {
     if (style.customImageUrl?.startsWith("blob:")) URL.revokeObjectURL(style.customImageUrl);
     const url = URL.createObjectURL(file);
     onChange({ ...style, backgroundType: "image", customImageUrl: url });
+    onCommit();
   }
 
   function clearCustomImage() {
@@ -123,7 +146,8 @@ export function StylePanel({
             value={style.backgroundBlur}
             min={0}
             max={40}
-            onChange={(v) => set("backgroundBlur", v)}
+            onChange={(v) => setLive("backgroundBlur", v)}
+            onCommit={onCommit}
           />
         </div>
       )}
@@ -190,7 +214,8 @@ export function StylePanel({
             value={style.backgroundBlur}
             min={0}
             max={40}
-            onChange={(v) => set("backgroundBlur", v)}
+            onChange={(v) => setLive("backgroundBlur", v)}
+            onCommit={onCommit}
           />
         </div>
       )}
@@ -214,7 +239,12 @@ export function StylePanel({
           <input
             type="color"
             value={style.backgroundColor}
-            onChange={(e) => set("backgroundColor", e.target.value)}
+            // Native color pickers fire `onChange` continuously while the
+            // user drags inside the OS picker UI, same as a slider — live
+            // update here, commit once the picker closes and the input
+            // loses focus (there's no native "picker closed" event).
+            onChange={(e) => setLive("backgroundColor", e.target.value)}
+            onBlur={onCommit}
             className="h-7 w-7 cursor-pointer rounded-full border border-neutral-700 bg-transparent"
             aria-label="Custom background color"
           />
@@ -263,7 +293,8 @@ export function StylePanel({
               value={style.backgroundBlur}
               min={0}
               max={40}
-              onChange={(v) => set("backgroundBlur", v)}
+              onChange={(v) => setLive("backgroundBlur", v)}
+              onCommit={onCommit}
             />
           )}
         </div>
@@ -275,7 +306,8 @@ export function StylePanel({
           value={style.padding}
           min={0}
           max={160}
-          onChange={(v) => set("padding", v)}
+          onChange={(v) => setLive("padding", v)}
+          onCommit={onCommit}
           onReset={() => set("padding", DEFAULT_STYLE.padding)}
         />
         <Slider
@@ -283,7 +315,8 @@ export function StylePanel({
           value={style.cornerRadius}
           min={0}
           max={48}
-          onChange={(v) => set("cornerRadius", v)}
+          onChange={(v) => setLive("cornerRadius", v)}
+          onCommit={onCommit}
           onReset={() => set("cornerRadius", DEFAULT_STYLE.cornerRadius)}
         />
         <Slider
@@ -291,7 +324,8 @@ export function StylePanel({
           value={style.inset}
           min={0}
           max={12}
-          onChange={(v) => set("inset", v)}
+          onChange={(v) => setLive("inset", v)}
+          onCommit={onCommit}
           onReset={() => set("inset", DEFAULT_STYLE.inset)}
         />
       </div>
@@ -303,7 +337,8 @@ export function StylePanel({
           value={style.shadowBlur}
           min={0}
           max={100}
-          onChange={(v) => set("shadowBlur", v)}
+          onChange={(v) => setLive("shadowBlur", v)}
+          onCommit={onCommit}
           onReset={() => set("shadowBlur", DEFAULT_STYLE.shadowBlur)}
         />
         <Slider
@@ -311,14 +346,18 @@ export function StylePanel({
           value={style.shadowOffsetY}
           min={0}
           max={60}
-          onChange={(v) => set("shadowOffsetY", v)}
+          onChange={(v) => setLive("shadowOffsetY", v)}
+          onCommit={onCommit}
           onReset={() => set("shadowOffsetY", DEFAULT_STYLE.shadowOffsetY)}
         />
       </div>
 
       <button
         type="button"
-        onClick={() => onChange(DEFAULT_STYLE)}
+        onClick={() => {
+          onChange(DEFAULT_STYLE);
+          onCommit();
+        }}
         className="self-start text-xs text-neutral-500 underline underline-offset-2 hover:text-neutral-400"
       >
         Reset all to defaults
