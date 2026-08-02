@@ -194,7 +194,7 @@ fn pixel_buffer_from_frame(frame: &CapturedFrame) -> Result<CFRetained<CVPixelBu
     let mut pixel_buffer_ptr: *mut CVPixelBuffer = std::ptr::null_mut();
     let status = unsafe {
         objc2_core_video::CVPixelBufferCreateWithBytes(
-            None,
+            objc2_core_foundation::kCFAllocatorDefault,
             frame.width as usize,
             frame.height as usize,
             kCVPixelFormatType_32BGRA,
@@ -208,6 +208,14 @@ fn pixel_buffer_from_frame(frame: &CapturedFrame) -> Result<CFRetained<CVPixelBu
     };
 
     if status != kCVReturnSuccess {
+        tracing::error!(
+            "CVPixelBufferCreateWithBytes args: width={} height={} bytes_per_row={} buf_len={} base_address_null={}",
+            frame.width,
+            frame.height,
+            bytes_per_row,
+            frame.bgra.len(),
+            base_address.is_null(),
+        );
         // Creation failed before CoreVideo took ownership — free it
         // ourselves instead of leaking, since `release_bgra_bytes` will
         // never be called for a buffer that was never created.

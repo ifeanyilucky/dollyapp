@@ -242,6 +242,16 @@ fn run_capture(
         if first_error.is_some() {
             return;
         }
+        // `scap`/ScreenCaptureKit can emit degenerate 0x0 status frames
+        // while the stream is still starting up, before real content
+        // arrives. A 0x0 buffer isn't valid input to CVPixelBufferCreateWithBytes
+        // (returns kCVReturnInvalidArgument) and isn't worth an
+        // AVAssetWriter of that size either, so skip it rather than
+        // failing the whole recording over a frame that has no content.
+        if frame.width == 0 || frame.height == 0 {
+            tracing::warn!("skipping degenerate {}x{} frame", frame.width, frame.height);
+            return;
+        }
         size = (frame.width, frame.height);
 
         if writer.is_none() {
