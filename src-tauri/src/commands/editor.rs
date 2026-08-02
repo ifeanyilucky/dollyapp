@@ -27,3 +27,18 @@ pub fn load_recording(bundle_path: String) -> Result<LoadedRecording, String> {
         screen_video_path,
     })
 }
+
+/// Opens the bundle folder in Finder. Implemented as a plain `open`
+/// invocation (same pattern as `permissions::open_screen_recording_settings`)
+/// rather than through `tauri-plugin-shell`'s `open` command — that
+/// command's default ACL scope only covers `http(s)`/`tel`/`mailto`
+/// links, not arbitrary local paths, and Rust-side code doesn't need ACL
+/// grants the way frontend-invoked plugin commands do.
+#[tauri::command]
+pub fn reveal_in_finder(bundle_path: String) -> Result<(), String> {
+    std::process::Command::new("open")
+        .arg(&bundle_path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
