@@ -12,6 +12,7 @@ use crate::bundle::{names, BundleWriter, DisplayInfo, RecordingMeta};
 use crate::capture::{self, FrameGrabber};
 use crate::clock::Clock;
 use crate::cursor;
+use crate::encode::MovWriter;
 
 const FPS: u32 = 60;
 
@@ -36,7 +37,7 @@ struct ActiveRecording {
 }
 
 struct CaptureOutcome {
-    frame_index: Vec<(u64, u32)>,
+    frame_count: u32,
     width: u32,
     height: u32,
 }
@@ -188,10 +189,7 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
         has_mic_audio,
         fps: FPS,
     })?;
-    std::fs::write(
-        active.bundle_dir.join("frame_index.json"),
-        serde_json::to_vec_pretty(&outcome.frame_index)?,
-    )?;
+    tracing::info!("wrote {} frames to {}", outcome.frame_count, active.bundle_dir.display());
 
     Ok(active.bundle_dir)
 }
@@ -226,33 +224,47 @@ fn run_capture(
     bundle_dir: PathBuf,
     target: scap::Target,
 ) -> Result<CaptureOutcome> {
-    let frames_dir = bundle_dir.join("screen_frames");
-    std::fs::create_dir_all(&frames_dir)?;
-
+    let mov_path = bundle_dir.join(names::SCREEN_VIDEO);
     let mut grabber = FrameGrabber::new(clock, FPS, Some(target))?;
-    let mut frame_index = Vec::new();
-    let mut frame_number = 0u32;
+    // `MovWriter` needs frame dimensions up front (for the AVAssetWriter
+    // output-settings dict), which aren't known until the first frame
+    // arrives — so it's created lazily rather than passed in.
+    let mut writer: Option<MovWriter> = None;
     let mut size = (0u32, 0u32);
+    let mut frame_count = 0u32;
+    let mut first_error: Option<anyhow::Error> = None;
 
     grabber.run_until_stopped(&stop_flag, |frame| {
+        if first_error.is_some() {
+            return;
+        }
         size = (frame.width, frame.height);
-        if let Some(image) =
-            image::RgbaImage::from_raw(frame.width, frame.height, frame.to_rgba_bytes())
-        {
-            let path = frames_dir.join(format!("{frame_number:06}.png"));
-            if let Err(e) = image.save(&path) {
-                tracing::warn!("failed to write frame {frame_number}: {e}");
+
+        if writer.is_none() {
+            match MovWriter::create(&mov_path, frame.width, frame.height) {
+                Ok(w) => writer = Some(w),
+                Err(e) => {
+                    first_error = Some(e);
+                    return;
+                }
             }
         }
-        frame_index.push((frame.t, frame_number));
-        frame_number += 1;
+
+        if let Err(e) = writer.as_mut().expect("just created above").append(&frame) {
+            first_error = Some(e);
+            return;
+        }
+        frame_count += 1;
     })?;
 
-    Ok(CaptureOutcome {
-        frame_index,
-        width: size.0,
-        height: size.1,
-    })
+    if let Some(e) = first_error {
+        return Err(e);
+    }
+
+    let writer = writer.ok_or_else(|| anyhow!("recording stopped before any frame was captured"))?;
+    writer.finish()?;
+
+    Ok(CaptureOutcome { frame_count, width: size.0, height: size.1 })
 }
 
 fn new_bundle_dir(app: &AppHandle) -> Result<PathBuf> {

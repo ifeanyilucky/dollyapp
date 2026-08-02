@@ -31,15 +31,16 @@ Requires Rust (stable), Node 20+, pnpm, and Xcode command line tools.
 | `frontend/src/state/` | Zustand editor state |
 | `frontend/src/timeline/` | Hand-rolled canvas timeline |
 | `frontend/src/preview/` | WebGL2 live preview compositor |
-| `src-tauri/src/capture/` | Screen frame capture (`scap`) — currently a PNG-sequence stand-in, see the module doc comment |
+| `src-tauri/src/capture/` | Screen frame capture (`scap`) + display/window target enumeration |
 | `src-tauri/src/cursor/` | Global cursor/click/key monitoring; owns the main-thread-confined `NSEvent` monitor |
+| `src-tauri/src/audio/` | Mic capture via `AVAudioEngine`, writes `mic.wav` |
+| `src-tauri/src/encode/` | Real `screen.mov` via `AVAssetWriter`, fed by `capture`'s BGRA frames — see module doc comment for what it deliberately doesn't do (system audio, cursor exclusion) and why |
 | `src-tauri/src/permissions/` | Screen/mic/camera status checks, lazy requests, System Settings deep links |
-| `src-tauri/src/recorder/` | Orchestrates one recording: capture + cursor tracking + bundle writing, start/stop/pause/resume |
+| `src-tauri/src/recorder/` | Orchestrates one recording: capture + cursor + mic + `screen.mov` encode + bundle writing, start/stop/pause/resume |
 | `src-tauri/src/tray/` | Menu bar icon — the primary entry point (PRD §9) |
 | `src-tauri/src/shortcut.rs` | Global `⌥⌘2` hotkey, shares `tray::toggle_recording` |
 | `src-tauri/src/commands/` | Thin `#[tauri::command]` wrappers around the modules above — logic stays out of this layer |
-| `src-tauri/src/encode/` | VideoToolbox encode — not built yet, see module doc comment |
-| `src-tauri/src/export/` | wgpu compositing + export pipeline — not built yet |
+| `src-tauri/src/export/` | wgpu compositing + export pipeline (zoom/pan burned in for final output) — not built yet |
 | `src-tauri/src/fs/` | `.motionrec` bundle read/write |
 | `src-tauri/capabilities/` | Tauri v2 ACL grants for the frontend — a command added here needs a matching permission or `invoke()` fails at runtime |
 

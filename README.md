@@ -12,10 +12,12 @@ output is always cropped from a high-resolution source rather than scaled up
 from a low-resolution one.
 
 > **Status:** pre-alpha, mid-M1 (recorder core). Permissions, menu bar,
-> global hotkey, and a real start/stop/pause recording flow all work; there's
-> no target picker (full display only) and no real `screen.mov` encoding yet
-> (frames are written as a PNG sequence — see `src-tauri/src/capture/`). Not
-> ready for use.
+> global hotkey, a display/window picker, mic capture, and a real
+> start/stop/pause recording flow — including real H.264 `screen.mov`
+> encoding via `AVAssetWriter` — all work. Still missing: system audio and
+> region (sub-window) selection, both of which need a hand-rolled
+> `SCStream`, not just `AVAssetWriter` (see `src-tauri/src/encode/mod.rs`).
+> Not ready for use.
 
 ## Why
 
