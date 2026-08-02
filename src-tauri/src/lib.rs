@@ -67,6 +67,7 @@ pub fn run() {
             commands::get_settings,
             commands::set_show_in_dock,
             commands::open_settings_window,
+            commands::list_recent_projects,
         ])
         .manage(recorder::RecorderState::default())
         .manage(toolbar::ToolbarHitRect::default())
