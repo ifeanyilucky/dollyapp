@@ -254,6 +254,15 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
   let narrationPlayer: NarrationPlayer | null = null;
 
   try {
+    // Attaching this listener has to happen *before* any `await` runs, or
+    // a fast-loading local `blob:` video (this one) can fire
+    // `loadedmetadata` while we're still doing other async setup work —
+    // the listener would then never see it and time out waiting for an
+    // event that already happened. That's why the audio-mixing setup
+    // below (which does real async decode work) comes *after* this, not
+    // before it — it used to sit here and caused exactly that race.
+    await waitForEvent(video, "loadedmetadata", 30_000);
+
     if (opts.audioSettings.trackId || loaded.meta.hasMicAudio) {
       audioMixCtx = new AudioContext();
       audioMixDestination = audioMixCtx.createMediaStreamDestination();
@@ -269,7 +278,6 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
         narrationPlayer.setBuffer(await decodeAudioFromUrl(audioMixCtx, convertFileSrc(loaded.micAudioPath)));
       }
     }
-    await waitForEvent(video, "loadedmetadata", 30_000);
 
     // Effective in/out, clamped to what the file actually contains.
     const videoClipEnd = opts.clipEndS > 0 ? Math.min(opts.clipEndS, video.duration) : video.duration;
