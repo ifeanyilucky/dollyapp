@@ -76,22 +76,22 @@ const LOOP_BLEND_DURATION_US = 1_200_000;
  * not to flicker during a slow, deliberate drag. */
 const IDLE_WINDOW_US = 500_000;
 const IDLE_THRESHOLD_PX = 3;
-/** A "sensitive" mask's blur radius, as a fraction of its own on-screen
- * (content-rect-pixel) size — scales with how big/zoomed the box currently
- * renders at rather than a fixed pixel count, so it reads as "thoroughly
- * blurred" the same way regardless of the box's size or the current zoom
- * level. Tuned by eye. */
-const MASK_BLUR_FRACTION = 0.18;
-/** How far past `MASK_BLUR_FRACTION`'s own radius to overscan the region
- * sampled from `video` before blurring (see `drawBlurredRegion`) — without
- * this, a Gaussian blur right at the edge of a small scratch canvas would
- * partly sample *transparent* pixels rather than real (if unblurred)
- * picture content, fading the masked box's own edges toward see-through
- * rather than solidly blurred. Since this is hiding something specifically
- * because it's sensitive, a translucent edge that lets the sharp original
- * peek through underneath isn't just a quality nit, it's a real leak — so
- * this errs generous. */
-const MASK_BLUR_OVERSCAN_FACTOR = 2.5;
+/** A "sensitive" mask's blur strength — how much smaller than its own
+ * on-screen size the intermediate scratch canvas `drawBlurredRegion`
+ * downscales to before stretching back up. Deliberately *not*
+ * `ctx.filter = blur(...)`: that's reliable for a drawn shape (the cursor
+ * glyph) or an `<img>`-sourced fill (the background blur), but WebKit
+ * doesn't consistently apply a canvas filter to a `drawImage` whose
+ * *source* is a live `<video>` element specifically — video frames are
+ * often composited through a separate, hardware-accelerated path that
+ * filter operations don't reliably hook into, and that mismatch is
+ * exactly what made this render as an unblurred, fully-legible box
+ * instead of a redacted one. Downscale-then-upscale only relies on
+ * ordinary `drawImage` scaling (universally supported, video source or
+ * not) — smaller than this fraction of the box's own size = blurrier
+ * (and less legible) the result; tuned low enough that text becomes
+ * illegible, not just softened. */
+const MASK_BLUR_DOWNSCALE_FRACTION = 0.06;
 /** A mask's own corner radius (fraction of its smaller on-screen
  * dimension) while it's just sitting there being played back normally —
  * *not* while it's the one currently being actively edited, where it
@@ -560,16 +560,13 @@ export class SceneRenderer {
   /** Blurs just the `sourceRect` (point-space) region of `video` and draws
    * it, clipped to a rect of corner `radius`, at `(destX, destY, destW,
    * destH)` in canvas-pixel space — the "sensitive" mask's actual
-   * redaction. Draws into a scratch canvas *overscanned* by
-   * `MASK_BLUR_OVERSCAN_FACTOR`'s worth of extra margin before blurring,
-   * then composites back only the unpadded center: a Gaussian blur sampled
-   * right at the edge of a canvas that has nothing beyond it blurs *toward
-   * transparent* there (there's no real pixel data to blend with past the
-   * edge), which would let the sharp, unblurred frame already drawn
-   * underneath show through at the masked box's own border — overscanning
-   * means every blurred pixel that actually gets composited back had real
-   * neighboring picture data on all sides to blur with, so the box is
-   * solidly blurred edge-to-edge. */
+   * redaction. See `MASK_BLUR_DOWNSCALE_FRACTION`'s doc comment for why
+   * this is a downscale-then-upscale rather than `ctx.filter`: sampling
+   * `video` straight into a *much smaller* scratch canvas (a plain scaled
+   * `drawImage`, not a spreading blur kernel) means every output pixel is
+   * real, fully-opaque picture data — unlike a filter's blur radius, there
+   * is no "sample past the edge into nothing" case to guard against here,
+   * so the box is solidly obscured edge-to-edge with no extra bookkeeping. */
   private drawBlurredRegion(
     ctx: CanvasRenderingContext2D,
     video: HTMLVideoElement,
@@ -580,36 +577,33 @@ export class SceneRenderer {
     destH: number,
     radius: number,
   ): void {
-    const blurPx = Math.max(destW, destH) * MASK_BLUR_FRACTION;
-    const padPx = Math.ceil(blurPx * MASK_BLUR_OVERSCAN_FACTOR);
-    const bw = Math.max(1, Math.round(destW)) + padPx * 2;
-    const bh = Math.max(1, Math.round(destH)) + padPx * 2;
+    const bw = Math.max(1, Math.round(destW));
+    const bh = Math.max(1, Math.round(destH));
+    const tinyW = Math.max(1, Math.round(bw * MASK_BLUR_DOWNSCALE_FRACTION));
+    const tinyH = Math.max(1, Math.round(bh * MASK_BLUR_DOWNSCALE_FRACTION));
 
-    // The overscanned source rect, converted back from dest-pixel padding
-    // into `sourceRect`'s own (point-space) units so the extra sampled
-    // margin lines up 1:1 with the extra destination margin.
-    const padSourceX = (padPx / destW) * sourceRect.width;
-    const padSourceY = (padPx / destH) * sourceRect.height;
-    const sx = (sourceRect.x - padSourceX) * this.scaleFactor + this.cropOffsetPx.x;
-    const sy = (sourceRect.y - padSourceY) * this.scaleFactor + this.cropOffsetPx.y;
-    const sw = (sourceRect.width + padSourceX * 2) * this.scaleFactor;
-    const sh = (sourceRect.height + padSourceY * 2) * this.scaleFactor;
+    const sx = sourceRect.x * this.scaleFactor + this.cropOffsetPx.x;
+    const sy = sourceRect.y * this.scaleFactor + this.cropOffsetPx.y;
+    const sw = sourceRect.width * this.scaleFactor;
+    const sh = sourceRect.height * this.scaleFactor;
 
-    const buffer = this.maskBlurBuffer ?? document.createElement("canvas");
-    buffer.width = bw;
-    buffer.height = bh;
-    const bctx = buffer.getContext("2d");
-    if (!bctx) return;
-    bctx.clearRect(0, 0, bw, bh);
-    bctx.filter = `blur(${blurPx}px)`;
-    bctx.drawImage(video, sx, sy, sw, sh, 0, 0, bw, bh);
-    bctx.filter = "none";
-    this.maskBlurBuffer = buffer;
+    const tiny = this.maskBlurBuffer ?? document.createElement("canvas");
+    tiny.width = tinyW;
+    tiny.height = tinyH;
+    const tctx = tiny.getContext("2d");
+    if (!tctx) return;
+    tctx.imageSmoothingEnabled = true;
+    tctx.imageSmoothingQuality = "high";
+    tctx.clearRect(0, 0, tinyW, tinyH);
+    tctx.drawImage(video, sx, sy, sw, sh, 0, 0, tinyW, tinyH);
+    this.maskBlurBuffer = tiny;
 
     ctx.save();
     roundedRectPath(ctx, { x: destX, y: destY, width: destW, height: destH }, radius);
     ctx.clip();
-    ctx.drawImage(buffer, padPx, padPx, bw - padPx * 2, bh - padPx * 2, destX, destY, destW, destH);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(tiny, destX, destY, destW, destH);
     ctx.restore();
   }
 
