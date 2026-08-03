@@ -450,6 +450,36 @@ export function EditorView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUndo, canRedo, undoDoc, redoDoc, exporting, previewMode]);
 
+  // Arrow-key nudge for the crop rect while `CropEditor` is open (see the
+  // `Keyboard` icon in `CropToolbar`) — 1px per press, 10px with Shift.
+  // Ignored while a number input has focus, so the Size/Position fields'
+  // own native up/down arrow behavior isn't fought over. Reads
+  // `fullFrameSizeRef` (not the `fullFrameSize` const computed further
+  // down, after this component's `!loaded` early return) since this effect
+  // — like every other `useEffect` call, per the Rules of Hooks — has to
+  // sit before any conditional return, where that value doesn't exist yet.
+  useEffect(() => {
+    if (!cropMode || !draftCrop) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (!draftCrop) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+      const step = e.shiftKey ? 10 : 1;
+      let dx = 0;
+      let dy = 0;
+      if (e.key === "ArrowLeft") dx = -step;
+      else if (e.key === "ArrowRight") dx = step;
+      else if (e.key === "ArrowUp") dy = -step;
+      else if (e.key === "ArrowDown") dy = step;
+      else return;
+      e.preventDefault();
+      const full = fullFrameSizeRef.current;
+      setDraftCrop(clampCropRect({ ...draftCrop, x: draftCrop.x + dx, y: draftCrop.y + dy }, full.width, full.height));
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [cropMode, draftCrop]);
+
   // Fades `PreviewControls` in on mouse activity and back out after a
   // few seconds of none — only while actually playing; paused, there's no
   // "distraction" to clear away from a static frame, so it stays put (same
