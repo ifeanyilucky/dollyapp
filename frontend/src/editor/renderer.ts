@@ -64,9 +64,10 @@ const CURSOR_SIZE_PX = 92;
 // no-op on *every* draw path, including the glyph's primitive fill/stroke
 // (a blurred composite is pixel-identical to an unblurred one), which is
 // why the cursor only ever visibly *faded* before rather than smearing. The
-// cursor also stays fully opaque: a fast move (whether from real mouse
-// movement or from the viewport sweeping it across the frame during a
-// zoom/pan transition) smears it into a blur, it doesn't fade it out.
+// cursor also stays fully opaque: a fast real mouse move smears it into a
+// blur, it doesn't fade it out. (A zoom/pan transition sweeping a
+// stationary cursor across the frame doesn't blur it — that's viewport
+// motion, not cursor motion.)
 // Velocity is normalized by real elapsed wall-clock time (not video time),
 // so intensity naturally scales with playback rate too — 2x playback
 // looks proportionally blurrier, which is the physically-correct
@@ -537,13 +538,22 @@ export class SceneRenderer {
     const cx = content.x + ((cursor.x - viewport.x) / viewport.width) * content.width;
     const cy = content.y + ((cursor.y - viewport.y) / viewport.height) * content.height;
 
-    // Blur/fade for a fast cursor move (see the constants and comment at
-    // the top of this file) — in the same *content*/on-screen pixel space
-    // the glyph itself is drawn in, so the effect scales with zoom the
-    // same way the cursor's apparent speed does (a fast move reads as
-    // faster, and blurrier, while zoomed in).
-    const { blurPx: cursorBlurPx, alpha: cursorAlpha } = this.cursorMotion(cx, cy, dtMs, cursorBlurFactor);
-    this.lastCursorRenderPos = { x: cx, y: cy };
+    // Blur for a fast *cursor* move (see the constants and comment at the
+    // top of this file) — measured from the raw cursor track position
+    // (not the projected `cx`/`cy` above), scaled to on-screen content
+    // pixels by the current zoom. Measuring from the raw position means a
+    // zoom/pan transition that sweeps a *stationary* cursor across the
+    // frame doesn't read as cursor motion and blur it — the cursor only
+    // blurs when the recorded cursor itself actually moved. The zoom
+    // scale keeps a fast real move reading as fast — and blurrier — while
+    // zoomed in, same as before.
+    const { blurPx: cursorBlurPx, alpha: cursorAlpha } = this.cursorMotion(
+      cursor,
+      content.width / viewport.width,
+      dtMs,
+      cursorBlurFactor,
+    );
+    this.lastCursorRenderPos = { x: cursor.x, y: cursor.y };
 
     if (cursorSettings.clickEffectEnabled) this.drawClickRipples(ctx, tUs, viewport, content);
 
@@ -569,22 +579,27 @@ export class SceneRenderer {
     return Math.round(intensity * MAX_TRAIL_STEPS);
   }
 
-  /** Gaussian blur radius for the cursor glyph this frame, from how far it
-   * moved (in on-screen content pixels) since the last `draw` call — see
-   * the constants at the top of this file. `blurFactor` (0-1, the
-   * Animations panel's "Motion blur" slider, gated on "applies to cursor
-   * movement") scales the radius — 0 means a fast move stays perfectly
-   * sharp. Alpha is always 1: the cursor never fades out, a fast move
-   * (real mouse movement, or the viewport sweeping the cursor across the
-   * frame during a zoom/pan transition) just smears it into a blur. */
+  /** Gaussian blur radius for the cursor glyph this frame, from how far
+   * the *cursor itself* moved (in raw recording point-space, scaled to
+   * on-screen content pixels by `contentScale`) since the last `draw`
+   * call — see the constants at the top of this file. Measuring from the
+   * raw cursor position rather than the glyph's projected screen
+   * position is deliberate: a viewport zoom/pan sweeps a stationary
+   * cursor across the frame, and that isn't cursor movement, so it must
+   * not blur it. `blurFactor` (0-1, the Animations panel's "Motion blur"
+   * slider, gated on "applies to cursor movement") scales the radius — 0
+   * means a fast move stays perfectly sharp. Alpha is always 1: the
+   * cursor never fades out, a fast real mouse move just smears it into a
+   * blur. */
   private cursorMotion(
-    cx: number,
-    cy: number,
+    cursor: { x: number; y: number },
+    contentScale: number,
     dtMs: number | null,
     blurFactor: number,
   ): { blurPx: number; alpha: number } {
     if (!this.lastCursorRenderPos || dtMs === null || blurFactor <= 0) return { blurPx: 0, alpha: 1 };
-    const distPx = Math.hypot(cx - this.lastCursorRenderPos.x, cy - this.lastCursorRenderPos.y);
+    const distPx =
+      Math.hypot(cursor.x - this.lastCursorRenderPos.x, cursor.y - this.lastCursorRenderPos.y) * contentScale;
     const speedPerMs = distPx / dtMs;
     const intensity = Math.min(1, speedPerMs * CURSOR_BLUR_SENSITIVITY);
     return { blurPx: intensity * MAX_CURSOR_BLUR_PX * blurFactor, alpha: 1 };
@@ -1122,11 +1137,10 @@ function boxBlurGaussian(buf: Uint8ClampedArray, width: number, height: number, 
  * as its own line-art shape, while theme styles (hand, crosshair, ...)
  * always draw their own glyph — see `cursorGlyphFor`.
  */
-/** Draws the cursor glyph — `blurPx > 0` (a fast move, from real movement
- * or a zoom/pan transition sweeping it across the frame) renders it via
- * `drawBlurredCursorGlyph` as a software Gaussian-blurred smear at full
- * opacity, rather than fading it out. `alpha` is effectively always 1 now
- * (see `cursorMotion`) but stays in the signature for the ripple code's
+/** Draws the cursor glyph — `blurPx > 0` (a fast real mouse move) renders
+ * it via `drawBlurredCursorGlyph` as a software Gaussian-blurred smear at
+ * full opacity, rather than fading it out. `alpha` is effectively always 1
+ * now (see `cursorMotion`) but stays in the signature for the ripple code's
  * sake. */
 function drawCursorGlyph(
   ctx: CanvasRenderingContext2D,
