@@ -126,6 +126,13 @@ export function AnimationPanel({
           onCommit={onCommit}
           onReset={() => set("motionBlur", DEFAULT_ANIMATION_SETTINGS.motionBlur)}
         />
+        <div className="mt-4">
+          <ToggleRow
+            label="Blur the cursor glyph itself while it's moving fast."
+            checked={settings.motionBlurAppliesToCursor}
+            onChange={(v) => set("motionBlurAppliesToCursor", v)}
+          />
+        </div>
       </div>
 
       <div>
@@ -151,12 +158,6 @@ export function AnimationPanel({
               description="Blur the content trail during zoom/pan transitions."
               checked={settings.motionBlurAppliesToScreen}
               onChange={(v) => set("motionBlurAppliesToScreen", v)}
-            />
-            <ToggleRow
-              label="Apply to cursor movement"
-              description="Blur the cursor glyph itself while it's moving fast."
-              checked={settings.motionBlurAppliesToCursor}
-              onChange={(v) => set("motionBlurAppliesToCursor", v)}
             />
           </div>
         )}
