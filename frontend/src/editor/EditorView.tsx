@@ -12,6 +12,8 @@ import { DEFAULT_DOCUMENT, type EditorDocument } from "./document";
 import { exportVideo } from "./exportVideo";
 import { useHistoryState } from "./history";
 import { IconRail, type ToolId } from "./IconRail";
+import { createMask, defaultMaskRange, masksActiveAt, type MaskClip, type MaskType } from "./masks";
+import { MaskEditorPanel } from "./MaskEditorPanel";
 import { computeContentRect, SceneRenderer, shiftCursorTrack } from "./renderer";
 import { initialSlices, resizeSlices, sliceAt, splitSliceAt, type ClipSlice } from "./slices";
 import { SliceEditorPanel } from "./SliceEditorPanel";
@@ -70,6 +72,7 @@ export function EditorView({
   const [playbackRate, setPlaybackRate] = useState(1);
   const [selectedSliceId, setSelectedSliceId] = useState<string | null>(null);
   const [selectedZoomIndex, setSelectedZoomIndex] = useState<number | null>(null);
+  const [selectedMaskId, setSelectedMaskId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<ToolId>("style");
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
@@ -128,6 +131,7 @@ export function EditorView({
     clipEndS,
     slices,
     cursorSettings,
+    masks,
   } = doc;
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -145,6 +149,8 @@ export function EditorView({
   playbackRateRef.current = playbackRate;
   const slicesRef = useRef(slices);
   slicesRef.current = slices;
+  const masksRef = useRef(masks);
+  masksRef.current = masks;
   const clipStartRef = useRef(clipStartS);
   clipStartRef.current = clipStartS;
   const clipEndRef = useRef(clipEndS);
@@ -384,6 +390,7 @@ export function EditorView({
           clipEndTUs,
           activeSlice?.cursorOverride ?? null,
           cropModeRef.current,
+          masksActiveAt(masksRef.current, video.currentTime),
         );
         // Skip while previewing — the committed playhead (`currentTime`,
         // and the real solid-white indicator it drives in `Timeline`) must
@@ -585,6 +592,7 @@ export function EditorView({
         clipStartS,
         clipEndS,
         slices,
+        masks,
         style,
         showCursor,
         cursorSettings,
@@ -623,21 +631,31 @@ export function EditorView({
   function selectSlice(id: string) {
     setSelectedSliceId(id);
     setSelectedZoomIndex(null);
+    setSelectedMaskId(null);
   }
 
   function selectZoomKeyframe(index: number) {
     setSelectedZoomIndex(index);
     setSelectedSliceId(null);
+    setSelectedMaskId(null);
+  }
+
+  function selectMask(id: string) {
+    setSelectedMaskId(id);
+    setSelectedSliceId(null);
+    setSelectedZoomIndex(null);
   }
 
   /** `IconRail`'s `onSelect` — also clears any selected slice/zoom
-   * keyframe, or clicking a rail tool while `SliceEditorPanel`/
-   * `ZoomEditorPanel` is showing would silently no-op: the sidebar's
-   * ternary checks `selectedSlice`/`selectedZoomKeyframe` before
-   * `activeTool`, so without this the panel never actually swaps. */
+   * keyframe/mask, or clicking a rail tool while `SliceEditorPanel`/
+   * `ZoomEditorPanel`/`MaskEditorPanel` is showing would silently no-op:
+   * the sidebar's ternary checks `selectedSlice`/`selectedZoomKeyframe`/
+   * `selectedMask` before `activeTool`, so without this the panel never
+   * actually swaps. */
   function selectTool(id: ToolId) {
     setSelectedSliceId(null);
     setSelectedZoomIndex(null);
+    setSelectedMaskId(null);
     setActiveTool(id);
   }
 
@@ -699,8 +717,42 @@ export function EditorView({
     setDocTransient((d) => ({ ...d, zoomKeyframes: next }));
   }
 
-  // Undo/redo clear the current slice/zoom-keyframe selection rather than
-  // trying to keep it pointed at "the same" item across a change whose
+  /** The top bar's "Mask" dropdown — adds a new mask starting at the
+   * current playhead (`defaultMaskRange`, `DEFAULT_MASK_DURATION_S` long,
+   * clamped to the clip) and immediately selects it, opening
+   * `MaskEditorPanel` the same way clicking a freshly-split slice would. */
+  function addMask(type: MaskType) {
+    const { startS, endS } = defaultMaskRange(currentTime, clipStartS, clipEndS);
+    const mask = createMask(startS, endS, type);
+    setDoc((d) => ({ ...d, masks: [...d.masks, mask] }));
+    setSelectedMaskId(mask.id);
+    setSelectedSliceId(null);
+    setSelectedZoomIndex(null);
+  }
+
+  function updateMask(next: MaskClip) {
+    setDoc((d) => ({ ...d, masks: d.masks.map((m) => (m.id === next.id ? next : m)) }));
+  }
+
+  /** Unlike `removeSlice` (which marks `removed: true` to preserve the
+   * "slices always tile the clip" invariant), a mask is an independent
+   * overlay with no such invariant to protect — removing it outright is
+   * safe and simpler. */
+  function removeMask() {
+    if (!selectedMaskId) return;
+    setDoc((d) => ({ ...d, masks: d.masks.filter((m) => m.id !== selectedMaskId) }));
+    setSelectedMaskId(null);
+  }
+
+  /** Live update while dragging a mask clip (move or trim) directly on the
+   * timeline — pairs with `commitDoc` (`Timeline`'s `onCommitChange`), same
+   * as `updateAllZoomKeyframesLive`. */
+  function updateAllMasksLive(next: MaskClip[]) {
+    setDocTransient((d) => ({ ...d, masks: next }));
+  }
+
+  // Undo/redo clear the current slice/zoom-keyframe/mask selection rather
+  // than trying to keep it pointed at "the same" item across a change whose
   // array indices/contents it doesn't control — e.g. undoing a removed
   // keyframe restores the array, but there's no principled index to
   // reselect. Showing nothing selected is unambiguous; showing the wrong
@@ -708,12 +760,14 @@ export function EditorView({
   function handleUndo() {
     setSelectedSliceId(null);
     setSelectedZoomIndex(null);
+    setSelectedMaskId(null);
     undoDoc();
   }
 
   function handleRedo() {
     setSelectedSliceId(null);
     setSelectedZoomIndex(null);
+    setSelectedMaskId(null);
     redoDoc();
   }
 
@@ -806,6 +860,7 @@ export function EditorView({
 
   const selectedSlice = slices.find((s) => s.id === selectedSliceId);
   const selectedZoomKeyframe = selectedZoomIndex !== null ? zoomKeyframes[selectedZoomIndex] : undefined;
+  const selectedMask = masks.find((m) => m.id === selectedMaskId);
 
   return (
     <div className="relative flex h-screen w-screen flex-col bg-neutral-950 text-neutral-300">
@@ -829,6 +884,8 @@ export function EditorView({
         onTogglePreviewMode={togglePreviewMode}
         hasCrop={crop !== null}
         onOpenCropEditor={enterCropMode}
+        hasMasks={masks.length > 0}
+        onAddMask={addMask}
         playbackRate={playbackRate}
         onCyclePlaybackRate={cyclePlaybackRate}
         onExport={() => void handleExport()}
@@ -880,8 +937,20 @@ export function EditorView({
         </div>
         {showSidebar && (
           <>
-            <IconRail active={selectedSlice || selectedZoomKeyframe ? null : activeTool} onSelect={selectTool} />
-            {selectedSlice ? (
+            <IconRail
+              active={selectedSlice || selectedZoomKeyframe || selectedMask ? null : activeTool}
+              onSelect={selectTool}
+            />
+            {selectedMask ? (
+              <MaskEditorPanel
+                mask={selectedMask}
+                onChange={updateMask}
+                onCommit={commitDoc}
+                onRemove={removeMask}
+                onFocusStart={() => handleSeek(selectedMask.startS)}
+                onClose={() => setSelectedMaskId(null)}
+              />
+            ) : selectedSlice ? (
               <SliceEditorPanel
                 slice={selectedSlice}
                 onChange={updateSlice}
@@ -975,6 +1044,9 @@ export function EditorView({
             onSelectSlice={selectSlice}
             onSplitZoomKeyframe={handleSplitZoom}
             onSelectZoomKeyframe={selectZoomKeyframe}
+            masks={masks}
+            onChangeMasks={updateAllMasksLive}
+            onSelectMask={selectMask}
             resolution={resolution}
             onChangeResolution={changeResolution}
             sourceWidthPx={loaded.meta.display.widthPx}

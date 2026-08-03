@@ -9,11 +9,13 @@ import {
   Folder,
   FolderClock,
   Gauge,
+  Highlighter,
   Loader,
   Maximize2,
   Minimize2,
   Redo2,
   Shapes,
+  Shield,
   Sparkles,
   Trash2,
   Undo2,
@@ -22,6 +24,7 @@ import {
 import { useEffect, useState } from "react";
 import { ASPECT_RATIO_PRESETS, type AspectRatioId } from "./aspect";
 import { listRecentProjects, type RecentProject } from "./api";
+import type { MaskType } from "./masks";
 
 const SPEED_STEPS = [1, 1.5, 2, 0.5];
 
@@ -33,8 +36,7 @@ const SPEED_STEPS = [1, 1.5, 2, 0.5];
  * preview mode — see below), playback-speed cycling, output aspect ratio
  * (PRD §9, "Horizontal and vertical output"), and undo/redo (also ⌘Z/⇧⌘Z —
  * see `EditorView`'s history, `history.ts`). Presets is inert — there's no
- * preset library yet. Crop / Mask are separate, larger features not
- * covered here.
+ * preset library yet. Crop is a separate, larger feature not covered here.
  */
 export function TopBar({
   title,
@@ -48,6 +50,8 @@ export function TopBar({
   onTogglePreviewMode,
   hasCrop,
   onOpenCropEditor,
+  hasMasks,
+  onAddMask,
   playbackRate,
   onCyclePlaybackRate,
   onExport,
@@ -84,6 +88,12 @@ export function TopBar({
    * it while a crop is already confirmed edits that one, rather than
    * starting over from the full frame. */
   onOpenCropEditor: () => void;
+  /** Whether any mask exists yet (`doc.masks.length > 0`) — lights up the
+   * Mask button the same way `hasCrop` lights up Crop. */
+  hasMasks: boolean;
+  /** Adds a new mask (at the current playhead — see `EditorView.addMask`)
+   * and selects it, opening `MaskEditorPanel`. */
+  onAddMask: (type: MaskType) => void;
   playbackRate: number;
   onCyclePlaybackRate: () => void;
   onExport: () => void;
@@ -323,13 +333,42 @@ export function TopBar({
           <Crop className="h-3.5 w-3.5" />
           Crop
         </button>
-        <span
-          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-neutral-600"
-          title="Mask — not available yet"
-        >
-          <Shapes className="h-3.5 w-3.5" />
-          Mask
-        </span>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <button
+              type="button"
+              className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium transition-colors ${
+                hasMasks ? "bg-indigo-500/20 text-indigo-400" : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
+              }`}
+              title="Mask"
+            >
+              <Shapes className="h-3.5 w-3.5" />
+              Mask
+            </button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              sideOffset={6}
+              align="start"
+              className="z-50 min-w-64 rounded-lg border border-neutral-800 bg-neutral-900 p-1 text-neutral-200 shadow-2xl [&_.mask-item]:flex [&_.mask-item]:cursor-pointer [&_.mask-item]:items-start [&_.mask-item]:gap-2 [&_.mask-item]:rounded-md [&_.mask-item]:px-2.5 [&_.mask-item]:py-1.5 [&_.mask-item]:text-[12px] [&_.mask-item]:outline-none [&_.mask-item[data-highlighted]]:bg-neutral-800"
+            >
+              <DropdownMenu.Item className="mask-item" onSelect={() => onAddMask("sensitive")}>
+                <Shield className="mt-0.5 h-3.5 w-3.5 shrink-0 text-rose-400" />
+                <span className="flex flex-col">
+                  <span className="font-medium text-neutral-200">Add sensitive data mask</span>
+                  <span className="text-[11px] text-neutral-500">Fully hides this part of the recording</span>
+                </span>
+              </DropdownMenu.Item>
+              <DropdownMenu.Item className="mask-item" onSelect={() => onAddMask("highlight")}>
+                <Highlighter className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+                <span className="flex flex-col">
+                  <span className="font-medium text-neutral-200">Add highlight mask</span>
+                  <span className="text-[11px] text-neutral-500">Tints this part of the recording</span>
+                </span>
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
       </div>
     </div>
   );
