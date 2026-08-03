@@ -29,6 +29,13 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tauri-plugin-dialog = "2.7.2"
+# Packs a finished recording's meta.json/cursor.json/screen.mov/mic.wav into
+# one `.dol` file (see `bundle::container`) — only `deflate` is enabled
+# (for the small JSON entries); `screen.mov`/`mic.wav` are stored
+# uncompressed (Zip's baseline "Stored" method needs no codec feature at
+# all) so `dol_protocol` can serve byte ranges straight off disk without
+# decompressing.
+zip = { version = "4.2.0", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
