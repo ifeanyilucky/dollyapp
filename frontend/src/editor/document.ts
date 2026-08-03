@@ -1,5 +1,6 @@
 import type { ZoomKeyframe } from "../motion-engine";
 import type { AspectRatioId } from "./aspect";
+import type { CropRect } from "./crop";
 import { DEFAULT_CURSOR_SETTINGS, type CursorSettings } from "./cursorSettings";
 import { DEFAULT_RESOLUTION, type ResolutionId } from "./resolution";
 import type { ClipSlice } from "./slices";
@@ -19,6 +20,10 @@ export interface EditorDocument {
   /** Output resolution tier (also what the live preview canvas renders at
    * — see `resolution.ts`'s `computeOutputSize`). */
   resolution: ResolutionId;
+  /** A sub-rectangle of the fully composed frame to keep — `null` means no
+   * crop (the full frame, today's behavior unchanged). See `crop.ts`'s
+   * doc comment for the coordinate space this lives in. */
+  crop: CropRect | null;
   zoomKeyframes: ZoomKeyframe[];
   /** Effective in/out of the whole clip (video-relative seconds) — both 0
    * until the video's metadata loads (see `EditorView`'s `patch` call on
@@ -34,6 +39,7 @@ export const DEFAULT_DOCUMENT: EditorDocument = {
   showCursor: true,
   aspectRatioId: "original",
   resolution: DEFAULT_RESOLUTION,
+  crop: null,
   zoomKeyframes: [],
   clipStartS: 0,
   clipEndS: 0,

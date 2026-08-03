@@ -5,6 +5,8 @@ import { generateZoomKeyframes, splitKeyframeAt, type ZoomKeyframe } from "../mo
 import { aspectRatioPreset } from "./aspect";
 import { deleteRecording, loadRecording, revealInFinder, type LoadedRecording } from "./api";
 import { playClickSound } from "./clickSound";
+import { CropEditor } from "./CropEditor";
+import { clampCropRect, fullFrameCrop, isFullFrameCrop, type CropRect } from "./crop";
 import { CursorPanel } from "./CursorPanel";
 import { DEFAULT_DOCUMENT, type EditorDocument } from "./document";
 import { exportVideo } from "./exportVideo";
@@ -89,6 +91,17 @@ export function EditorView({
   // see the mouse-activity effect below, next to the other preview-mode
   // state. Only meaningful while `previewMode` is true.
   const [previewControlsVisible, setPreviewControlsVisible] = useState(true);
+  // Crop mode (the top bar's "Crop" button) — `cropMode` toggles the
+  // `CropEditor` overlay on; `draftCrop` is the *in-progress* rect it edits
+  // (drag handles, Size/Position inputs), kept as plain local state rather
+  // than routed through `doc.crop` until "Confirm changes" commits it as
+  // one `history.set` — see `enterCropMode`/`confirmCrop`/`discardCrop`.
+  // While `cropMode` is true the canvas keeps showing the *full,
+  // uncropped* frame (see `tick` below) regardless of `doc.crop`, so the
+  // user can see context around the boundary while dragging; only a
+  // confirmed `doc.crop` ever actually crops what's rendered/exported.
+  const [cropMode, setCropMode] = useState(false);
+  const [draftCrop, setDraftCrop] = useState<CropRect | null>(null);
 
   // The undoable document — style, cursor overlay settings, output aspect,
   // zoom keyframes, clip trim, and slices. See the module doc comment and
@@ -104,8 +117,18 @@ export function EditorView({
     redo: redoDoc,
     patch: patchDoc,
   } = useHistoryState<EditorDocument>(DEFAULT_DOCUMENT);
-  const { style, showCursor, aspectRatioId, resolution, zoomKeyframes, clipStartS, clipEndS, slices, cursorSettings } =
-    doc;
+  const {
+    style,
+    showCursor,
+    aspectRatioId,
+    resolution,
+    crop,
+    zoomKeyframes,
+    clipStartS,
+    clipEndS,
+    slices,
+    cursorSettings,
+  } = doc;
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -147,6 +170,19 @@ export function EditorView({
   // Drive `PreviewControls`' fade — see the mouse-activity effect below.
   const previewHideTimerRef = useRef<number | null>(null);
   const hoveringPreviewControlsRef = useRef(false);
+  // Read from `tick` without becoming a dependency of it — same pattern as
+  // `styleRef`/etc above. `fullFrameSizeRef` is set once `loaded` (where
+  // it's computed, alongside `canvasWidth`/`canvasHeight` below) is truthy
+  // — always valid by the time `tick` actually runs, since that effect is
+  // itself gated on `loaded`.
+  const cropRef = useRef(crop);
+  cropRef.current = crop;
+  const cropModeRef = useRef(cropMode);
+  cropModeRef.current = cropMode;
+  const fullFrameSizeRef = useRef({ width: 0, height: 0 });
+  // Reused across frames instead of created per-draw — only actually
+  // rendered into while a confirmed crop is active (see `tick`).
+  const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -312,16 +348,65 @@ export function EditorView({
         }
         lastSoundCheckTUsRef.current = tUs;
 
-        renderer.draw(
-          ctx,
-          video,
-          tUs,
-          styleRef.current,
-          showCursorRef.current,
-          cursorSettingsRef.current,
-          clipEndTUs,
-          activeSlice?.cursorOverride ?? null,
-        );
+        // A confirmed crop (and not actively re-editing it — see
+        // `cropModeRef`'s doc comment) means the visible canvas is sized
+        // *smaller* than the full composed frame (`canvasWidth`/
+        // `canvasHeight` below already reflect this). `renderer.draw()`
+        // itself is completely unaware of cropping — it always composites
+        // the *full* frame — so the full frame gets rendered onto a reused
+        // offscreen canvas first, and only the crop sub-rect of that gets
+        // blitted onto the actually-visible canvas. Skipped entirely
+        // (rendering straight to `ctx` as before) whenever there's nothing
+        // to crop, so the common case pays zero extra cost.
+        const activeCrop = cropRef.current;
+        const full = fullFrameSizeRef.current;
+        if (!cropModeRef.current && activeCrop && !isFullFrameCrop(activeCrop, full.width, full.height)) {
+          let offscreen = offscreenCanvasRef.current;
+          if (!offscreen) {
+            offscreen = document.createElement("canvas");
+            offscreenCanvasRef.current = offscreen;
+          }
+          if (offscreen.width !== full.width || offscreen.height !== full.height) {
+            offscreen.width = full.width;
+            offscreen.height = full.height;
+          }
+          const offscreenCtx = offscreen.getContext("2d");
+          if (offscreenCtx) {
+            renderer.draw(
+              offscreenCtx,
+              video,
+              tUs,
+              styleRef.current,
+              showCursorRef.current,
+              cursorSettingsRef.current,
+              clipEndTUs,
+              activeSlice?.cursorOverride ?? null,
+            );
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(
+              offscreen,
+              activeCrop.x,
+              activeCrop.y,
+              activeCrop.width,
+              activeCrop.height,
+              0,
+              0,
+              canvas.width,
+              canvas.height,
+            );
+          }
+        } else {
+          renderer.draw(
+            ctx,
+            video,
+            tUs,
+            styleRef.current,
+            showCursorRef.current,
+            cursorSettingsRef.current,
+            clipEndTUs,
+            activeSlice?.cursorOverride ?? null,
+          );
+        }
         // Skip while previewing — the committed playhead (`currentTime`,
         // and the real solid-white indicator it drives in `Timeline`) must
         // not move just because the mouse is hovering somewhere.
@@ -495,6 +580,7 @@ export function EditorView({
         cursorSettings,
         aspectRatioId,
         resolution,
+        crop,
         onProgress: (done, total) => setExportProgress(total > 0 ? done / total : 0),
       });
       if (dest) {
@@ -642,21 +728,31 @@ export function EditorView({
 
   const sourceAspect = loaded.meta.display.widthPx / loaded.meta.display.heightPx;
   const outputAspect = aspectRatioPreset(aspectRatioId).ratio ?? sourceAspect;
-  // The canvas element's `width`/`height` *attributes* (as opposed to its
-  // CSS size, set separately below) are its actual render resolution — the
-  // same `computeOutputSize` calculation `exportVideo` uses, so what the
-  // preview renders at is genuinely what gets exported, not a separate
-  // on-screen-box-driven guess (ARCHITECTURE.md, "preview and export must
-  // never diverge"). The CSS `max-h-full max-w-full` below then scales
-  // that pixel buffer down to fit whatever on-screen space is actually
-  // available, exactly like an `<img>` would — the browser downsamples for
-  // display without touching the underlying render resolution.
-  const { width: canvasWidth, height: canvasHeight } = computeOutputSize(
+  // The full composed frame's own pixel size — aspect + resolution tier,
+  // *before* any crop. This is the space `doc.crop`'s coordinates live in
+  // (see `crop.ts`) and what the offscreen canvas in `tick` renders onto.
+  const fullFrameSize = computeOutputSize(
     resolutionPreset(resolution).longEdge,
     loaded.meta.display.widthPx,
     loaded.meta.display.heightPx,
     outputAspect,
   );
+  fullFrameSizeRef.current = fullFrameSize;
+  // The canvas element's `width`/`height` *attributes* (as opposed to its
+  // CSS size, set separately below) are its actual render resolution — the
+  // same computation `exportVideo` uses, so what the preview renders at is
+  // genuinely what gets exported, not a separate on-screen-box-driven
+  // guess (ARCHITECTURE.md, "preview and export must never diverge"). The
+  // CSS `max-h-full max-w-full` below then scales that pixel buffer down
+  // to fit whatever on-screen space is actually available, exactly like an
+  // `<img>` would — the browser downsamples for display without touching
+  // the underlying render resolution.
+  //
+  // Shrinks to the confirmed crop's own size once one exists — *except*
+  // while actively re-editing it (`cropMode`), when the canvas keeps
+  // showing the full, uncropped frame so `CropEditor` has context to drag
+  // handles against (see its own doc comment).
+  const { width: canvasWidth, height: canvasHeight } = !cropMode && crop ? crop : fullFrameSize;
 
   const selectedSlice = slices.find((s) => s.id === selectedSliceId);
   const selectedZoomKeyframe = selectedZoomIndex !== null ? zoomKeyframes[selectedZoomIndex] : undefined;
