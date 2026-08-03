@@ -349,6 +349,21 @@ export function Timeline({
           ))}
         </div>
 
+        {/* Tick markers — a dot right under each ruler label, with a line
+         * dropping from it through the gap and down into the video clip
+         * block, so it's visible exactly which time interval each part of
+         * the clip falls under. Drawn *after* (so on top of) the clip
+         * block below, spanning from the ruler's own bottom edge (16px)
+         * down through the 4px gap and the clip block's full 48px height. */}
+        <div className="pointer-events-none absolute inset-x-0 z-10" style={{ top: 16, height: 52 }}>
+          {ticks.map((t) => (
+            <div key={t} className="absolute top-0 -translate-x-1/2" style={{ left: `${(t / safeDuration) * 100}%` }}>
+              <div className="mx-auto h-1 w-1 rounded-full bg-neutral-400" />
+              <div className="mx-auto w-px bg-white/20" style={{ height: 48 }} />
+            </div>
+          ))}
+        </div>
+
         <div
           className={`relative mt-1 h-12 overflow-hidden rounded-md bg-neutral-900 ${splitArmed ? "cursor-crosshair" : ""}`}
         >
