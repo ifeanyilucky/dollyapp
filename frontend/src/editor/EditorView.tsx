@@ -24,6 +24,12 @@ import { Timeline } from "./Timeline";
 import { nextPlaybackRate, TopBar } from "./TopBar";
 import { ZoomEditorPanel } from "./ZoomEditorPanel";
 
+/** Arrow-key playback nudge (no per-recording frame rate is tracked, so
+ * this is a reasonable fixed approximation rather than a true single-frame
+ * step) — Shift jumps a full second instead, for covering more ground
+ * quickly. */
+const FRAME_STEP_S = 1 / 30;
+
 /**
  * Post-recording preview: plays `screen.mov` through the same motion
  * engine export uses (ARCHITECTURE.md, "preview and export must never
@@ -405,35 +411,79 @@ export function EditorView({
     return () => cancelAnimationFrame(raf);
   }, [loaded]);
 
-  // ⌘Z / ⇧⌘Z (or Ctrl on non-Mac) anywhere in the window — the same
-  // history the top bar's Undo/Redo buttons drive. Ignored while a text-
-  // like input has focus (none exist in these panels today, but this is
-  // cheap insurance) and while exporting, matching the top bar buttons'
-  // own `disabled` state there. Escape exits preview mode (the eye
-  // dropdown's "Enter preview mode") — the top bar stays visible and
-  // reachable while previewing, so reopening that same dropdown always
-  // works too, but Escape is the faster way out.
+  // The editor's global keyboard shortcuts — everything here is ignored
+  // while a text-like input has focus (cheap insurance; none of these
+  // panels have one today) and while actively cropping, since `CropEditor`
+  // owns arrow keys for nudging the crop rect via its own effect below and
+  // Space/Delete/seek-arrows would all be meaningless mid-crop anyway:
+  //
+  //  - Escape exits preview mode (the eye dropdown's "Enter preview mode")
+  //    — the top bar stays visible/reachable while previewing, so
+  //    reopening that dropdown always works too, but this is the faster
+  //    way out.
+  //  - ⌘Z / ⇧⌘Z (or Ctrl on non-Mac) is Undo/Redo, the same history the
+  //    top bar's buttons drive — also guarded on `exporting`, matching
+  //    those buttons' own `disabled` state.
+  //  - Space toggles play/pause, same as clicking the canvas or the
+  //    Timeline's play button — standard across every video editor/player.
+  //  - Left/Right arrow nudges the playhead by `FRAME_STEP_S` (Shift: a
+  //    full second) — frame-accurate stepping without needing to grab the
+  //    (possibly tiny, at low zoom) timeline with a mouse.
+  //  - Delete/Backspace removes whichever of a slice/zoom keyframe/mask is
+  //    currently selected, if any — same effect as that panel's own
+  //    "Remove" button, just reachable without moving the mouse there.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         if (previewMode) togglePreviewMode();
         return;
       }
-      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
+
       const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
-      if (exporting) return;
-      e.preventDefault();
-      if (e.shiftKey) {
-        if (canRedo) handleRedo();
-      } else if (canUndo) {
-        handleUndo();
+      const inInput = target !== null && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        if (inInput || exporting) return;
+        e.preventDefault();
+        if (e.shiftKey) {
+          if (canRedo) handleRedo();
+        } else if (canUndo) {
+          handleUndo();
+        }
+        return;
+      }
+
+      if (cropMode || inInput) return;
+
+      if (e.key === " ") {
+        e.preventDefault();
+        togglePlay();
+        return;
+      }
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        const video = videoRef.current;
+        if (!video) return;
+        const step = e.shiftKey ? 1 : FRAME_STEP_S;
+        handleSeek(video.currentTime + (e.key === "ArrowLeft" ? -step : step));
+        return;
+      }
+
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (selectedSliceId) {
+          if (slices.filter((s) => !s.removed).length > 1) removeSlice();
+        } else if (selectedZoomIndex !== null) {
+          removeZoomKeyframe();
+        } else if (selectedMaskId) {
+          removeMask();
+        }
       }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUndo, canRedo, undoDoc, redoDoc, exporting, previewMode]);
+  }, [canUndo, canRedo, undoDoc, redoDoc, exporting, previewMode, cropMode, selectedSliceId, selectedZoomIndex, selectedMaskId, slices]);
 
   // Arrow-key nudge for the crop rect while `CropEditor` is open (see the
   // `Keyboard` icon in `CropToolbar`) — 1px per press, 10px with Shift.
@@ -1042,13 +1092,14 @@ export function EditorView({
             slices={slices}
             onSplitClip={handleSplitClip}
             onSelectSlice={selectSlice}
+            selectedSliceId={selectedSliceId}
             onSplitZoomKeyframe={handleSplitZoom}
             onSelectZoomKeyframe={selectZoomKeyframe}
-            zoomSelected={selectedZoomIndex !== null}
+            selectedZoomIndex={selectedZoomIndex}
             masks={masks}
             onChangeMasks={updateAllMasksLive}
             onSelectMask={selectMask}
-            maskSelected={selectedMaskId !== null}
+            selectedMaskId={selectedMaskId}
             resolution={resolution}
             onChangeResolution={changeResolution}
             sourceWidthPx={loaded.meta.display.widthPx}
