@@ -1,7 +1,7 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { ZoomKeyframe } from "../motion-engine";
-import { setExportDestination, writeExportFile, type LoadedRecording } from "./api";
+import { mediaSrc, setExportDestination, writeExportFile, type LoadedRecording } from "./api";
 import type { AnimationSettings } from "./animationSettings";
 import { aspectRatioPreset, type AspectRatioId } from "./aspect";
 import type { AudioSettings } from "./audioSettings";
@@ -111,11 +111,17 @@ function waitUntil(predicate: () => boolean, timeoutMs = 15_000, reason = "condi
 }
 
 /** `screen.mov` as a same-origin `blob:` URL, so drawing its frames onto the
- * export canvas doesn't taint it. Prefers `fetch` on the `asset:` protocol
- * (streamed by the webview); falls back to a raw-byte IPC read. */
-async function loadVideoBlobUrl(path: string): Promise<{ url: string; revoke: () => void }> {
+ * export canvas doesn't taint it. `source` is already a fetchable URL —
+ * `dol://` (packed `.dol` bundles) or `asset:` (legacy directories). When
+ * `fallbackPath` is provided (legacy directories only) a raw-byte IPC read
+ * backs up a failed fetch; `.dol` bundles have no standalone file to read,
+ * so they rely on the protocol. */
+async function loadVideoBlobUrl(
+  source: string,
+  fallbackPath: string | null,
+): Promise<{ url: string; revoke: () => void }> {
   try {
-    const resp = await fetch(convertFileSrc(path));
+    const resp = await fetch(source);
     if (resp.ok) {
       const blob = await resp.blob();
       const url = URL.createObjectURL(blob);
@@ -124,10 +130,13 @@ async function loadVideoBlobUrl(path: string): Promise<{ url: string; revoke: ()
   } catch {
     // fall through to the IPC read below
   }
-  const buffer = await invoke<ArrayBuffer>("read_file_bytes", { path });
-  const blob = new Blob([buffer]);
-  const url = URL.createObjectURL(blob);
-  return { url, revoke: () => URL.revokeObjectURL(url) };
+  if (fallbackPath) {
+    const buffer = await invoke<ArrayBuffer>("read_file_bytes", { path: fallbackPath });
+    const blob = new Blob([buffer]);
+    const url = URL.createObjectURL(blob);
+    return { url, revoke: () => URL.revokeObjectURL(url) };
+  }
+  throw new Error("Couldn't load the screen capture for export.");
 }
 
 /** Resolves `AudioSettings.trackId` into a real, loopable `AudioBuffer` —
@@ -197,8 +206,11 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
     throw new Error("The export frame would be too small to encode.");
   }
 
-  const bundleDir = loaded.screenVideoPath.split("/").slice(0, -1).join("/");
-  const baseName = (loaded.screenVideoPath.split("/").pop() ?? "recording").replace(/\.motionrec$/, "");
+  // Default the save dialog to the recording's own folder/name — a single
+  // `Recording N.dol` file for new recordings, a `*.motionrec` directory for
+  // legacy ones.
+  const bundleDir = loaded.bundlePath.split("/").slice(0, -1).join("/");
+  const baseName = (loaded.bundlePath.split("/").pop() ?? "recording").replace(/\.(dol|motionrec)$/, "");
   const dest = await save({
     title: "Export video",
     defaultPath: `${bundleDir}/${baseName}.${container.extension}`,
@@ -231,7 +243,10 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
     cursorAnimationStyle: opts.animationSettings.cursorAnimationStyle,
   });
 
-  const { url: videoUrl, revoke: revokeVideoUrl } = await loadVideoBlobUrl(loaded.screenVideoPath);
+  const { url: videoUrl, revoke: revokeVideoUrl } = await loadVideoBlobUrl(
+    mediaSrc(loaded.screenVideoUrl),
+    loaded.screenVideoUrl.startsWith("dol://") ? null : loaded.screenVideoUrl,
+  );
   const video = document.createElement("video");
   video.muted = true;
   video.playsInline = true;
@@ -275,7 +290,7 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
       if (loaded.meta.hasMicAudio) {
         narrationPlayer = new NarrationPlayer(audioMixCtx, audioMixDestination);
         narrationPlayer.setVolume(opts.audioSettings.micVolume, opts.audioSettings.micMuted);
-        narrationPlayer.setBuffer(await decodeAudioFromUrl(audioMixCtx, convertFileSrc(loaded.micAudioPath)));
+        narrationPlayer.setBuffer(await decodeAudioFromUrl(audioMixCtx, mediaSrc(loaded.micAudioUrl)));
       }
     }
 

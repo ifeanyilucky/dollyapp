@@ -1,6 +1,6 @@
 /**
  * Microphone narration playback — the recorded `mic.wav` track (see
- * `RecordingMeta.hasMicAudio`/`LoadedRecording.micAudioPath`), decoded once
+ * `RecordingMeta.hasMicAudio`/`LoadedRecording.micAudioUrl`), decoded once
  * and played in lockstep with the main video, in both the live preview
  * (`EditorView`) and export (`exportVideo.ts`) — same "preview and export
  * must never diverge" principle as everything else in the editor.

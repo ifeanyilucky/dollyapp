@@ -1,10 +1,9 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { generateZoomKeyframes, splitKeyframeAt, type ZoomKeyframe } from "../motion-engine";
 import { AnimationPanel } from "./AnimationPanel";
 import { aspectRatioPreset } from "./aspect";
-import { deleteRecording, loadRecording, revealInFinder, type LoadedRecording } from "./api";
+import { deleteRecording, loadRecording, mediaSrc, revealInFinder, type LoadedRecording } from "./api";
 import { AudioPanel } from "./AudioPanel";
 import { BackgroundAudioPlayer, decodeAudioFromUrl, getAmbientBuffer, isAmbientTrackId } from "./backgroundAudio";
 import { playClickSound } from "./clickSound";
@@ -399,7 +398,7 @@ export function EditorView({
     const player = narrationPlayerRef.current;
     if (!ctx || !player) return;
     let cancelled = false;
-    void decodeAudioFromUrl(ctx, convertFileSrc(loaded.micAudioPath)).then((buffer) => {
+    void decodeAudioFromUrl(ctx, mediaSrc(loaded.micAudioUrl)).then((buffer) => {
       if (!cancelled) player.setBuffer(buffer);
     });
     return () => {
@@ -1350,7 +1349,7 @@ export function EditorView({
       {/* Hidden — used purely as a decoded-frame source for the canvas. */}
       <video
         ref={videoRef}
-        src={convertFileSrc(loaded.screenVideoPath)}
+        src={mediaSrc(loaded.screenVideoUrl)}
         className="hidden"
         preload="auto"
         onLoadedMetadata={(e) => {
