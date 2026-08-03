@@ -10,11 +10,14 @@ import {
 } from "../motion-engine";
 import { DEFAULT_ANIMATION_SETTINGS, type AnimationSettings } from "./animationSettings";
 import {
+  CURSOR_GLYPH_BOUNDS,
   cursorGlyphFor,
   cursorSizeMultiplier,
   cursorStylePreset,
   drawCursorShape,
   DEFAULT_CURSOR_SETTINGS,
+  type CursorGlyphId,
+  type CursorPaint,
   type CursorSettings,
 } from "./cursorSettings";
 import type { CropRect } from "./crop";
@@ -53,32 +56,37 @@ const CURSOR_SIZE_PX = 92;
 // The cursor glyph is a different case: it's a small, single, recognizable
 // icon shape (arrow/dot with a hard-edged fill+stroke), not a continuous
 // image, so the same "draw it several times at partial opacity" technique
-// just reads as several distinct ghost cursors rather than a blur. The
-// cursor draw also isn't inside a clip region (only the content draw
-// above is), so the WebKit clip+filter concern doesn't apply to it — a
-// real `ctx.filter = blur(...)` pass works for the cursor and gives an
-// actual soft, single smear instead of duplicated icons.
+// just reads as several distinct ghost cursors rather than a blur. So the
+// cursor gets a real *Gaussian* blur in software instead (`drawBlurredCursorGlyph`):
+// the glyph is rendered into a small scratch canvas and passed through
+// `boxBlurGaussian` (three box passes ≈ a Gaussian). Not `ctx.filter =
+// blur(...)` — verified on this WKWebView that a canvas filter is a silent
+// no-op on *every* draw path, including the glyph's primitive fill/stroke
+// (a blurred composite is pixel-identical to an unblurred one), which is
+// why the cursor only ever visibly *faded* before rather than smearing. The
+// cursor also stays fully opaque: a fast move (whether from real mouse
+// movement or from the viewport sweeping it across the frame during a
+// zoom/pan transition) smears it into a blur, it doesn't fade it out.
 // Velocity is normalized by real elapsed wall-clock time (not video time),
 // so intensity naturally scales with playback rate too — 2x playback
 // looks proportionally blurrier, which is the physically-correct
 // direction. Tuned by eye, not derived from anything physical — adjust the
 // constants below if the effect ever reads as too subtle or too smeary.
-const MAX_TRAIL_STEPS = 6;
+const MAX_TRAIL_STEPS = 10;
 const CONTENT_TRAIL_SENSITIVITY = 900;
 /** How opaque the *closest-to-current* echo gets at full intensity —
  * scaled down for earlier echoes so the trail actually fades out toward
- * its tail instead of every echo being equally solid. */
-const MAX_TRAIL_ALPHA = 0.5;
+ * its tail instead of every echo being equally solid. Kept low, with the
+ * higher `MAX_TRAIL_STEPS`, so the echoes blend into a continuous smear
+ * (a motion-blur streak) rather than a few distinct ghost copies. */
+const MAX_TRAIL_ALPHA = 0.35;
 /** Largest Gaussian blur radius (canvas px) applied to a fast-moving
- * cursor glyph. */
-const MAX_CURSOR_BLUR_PX = 14;
+ * cursor glyph. Applied in software (`boxBlurGaussian`) — a real
+ * `ctx.filter = blur(...)` is a silent no-op in this WKWebView even on
+ * the glyph's primitive fill/stroke draws (verified pixel-identical), so
+ * relying on it is exactly why the blur never showed up before. */
+const MAX_CURSOR_BLUR_PX = 18;
 const CURSOR_BLUR_SENSITIVITY = 5.5;
-/** Cursor opacity fades alongside the blur during a fast move ("faded
- * movement" — a blur alone still reads as sharp-but-smeared; a slight
- * fade on the glyph sells the "moving too fast to fully see it" feel) —
- * floors here rather than fading to fully invisible. */
-const MIN_CURSOR_ALPHA = 0.3;
-const CURSOR_FADE_SENSITIVITY = 0.32;
 /** `CursorSettings.loopCursorPosition`'s blend window, capped to 30% of
  * the clip for anything shorter than this. */
 const LOOP_BLEND_DURATION_US = 1_200_000;
@@ -560,12 +568,14 @@ export class SceneRenderer {
     return Math.round(intensity * MAX_TRAIL_STEPS);
   }
 
-  /** Gaussian blur radius + opacity for the cursor glyph this frame, from
-   * how far it moved (in on-screen content pixels) since the last `draw`
-   * call — see the constants at the top of this file. `blurFactor` (0-1,
-   * the Animations panel's "Motion blur" slider, gated on "applies to
-   * cursor movement") scales both the blur radius and how much the fade
-   * floor is allowed to bite — 0 means a fast move stays perfectly sharp. */
+  /** Gaussian blur radius for the cursor glyph this frame, from how far it
+   * moved (in on-screen content pixels) since the last `draw` call — see
+   * the constants at the top of this file. `blurFactor` (0-1, the
+   * Animations panel's "Motion blur" slider, gated on "applies to cursor
+   * movement") scales the radius — 0 means a fast move stays perfectly
+   * sharp. Alpha is always 1: the cursor never fades out, a fast move
+   * (real mouse movement, or the viewport sweeping the cursor across the
+   * frame during a zoom/pan transition) just smears it into a blur. */
   private cursorMotion(
     cx: number,
     cy: number,
@@ -576,9 +586,7 @@ export class SceneRenderer {
     const distPx = Math.hypot(cx - this.lastCursorRenderPos.x, cy - this.lastCursorRenderPos.y);
     const speedPerMs = distPx / dtMs;
     const intensity = Math.min(1, speedPerMs * CURSOR_BLUR_SENSITIVITY);
-    const blurPx = intensity * MAX_CURSOR_BLUR_PX * blurFactor;
-    const alpha = Math.max(MIN_CURSOR_ALPHA, 1 - speedPerMs * CURSOR_FADE_SENSITIVITY * blurFactor);
-    return { blurPx, alpha };
+    return { blurPx: intensity * MAX_CURSOR_BLUR_PX * blurFactor, alpha: 1 };
   }
 
   /** Draws every active mask's *own rectangular region* — not the whole
@@ -1036,17 +1044,20 @@ function hexToRgb(hex: string): [number, number, number] {
   return Number.isNaN(n) ? [255, 255, 255] : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-/** In-place blur of an RGBA pixel buffer (from `getImageData`), three
- * separable box-blur passes to approximate a Gaussian — the stand-in for the
- * canvas `filter` blur this WKWebView ignores on `drawImage` (see
- * `getBackgroundLayer`'s comment). Radius is in buffer pixels; each pass is a
- * sliding-window mean so cost is ~independent of radius. The scratch buffer
- * is reused across passes, and the horizontal/vertical sweeps alternate
- * between `buf` and `tmp` so a pass never samples its own output. */
-function boxBlurGaussian(buf: Uint8ClampedArray, width: number, height: number, radius: number): void {
+/** In-place blur of an RGBA pixel buffer (from `getImageData`), separable
+ * box-blur passes to approximate a Gaussian — the stand-in for the canvas
+ * `filter` blur this WKWebView ignores (see `getBackgroundLayer`'s
+ * comment). Defaults to three passes (≈ a Gaussian, for the background);
+ * the cursor's fast-move smear passes 2, where a triangle filter is
+ * visually indistinguishable and cheaper. Radius is in buffer pixels; each
+ * pass is a sliding-window mean so cost is ~independent of radius. The
+ * scratch buffer is reused across passes, and the horizontal/vertical
+ * sweeps alternate between `buf` and `tmp` so a pass never samples its own
+ * output. */
+function boxBlurGaussian(buf: Uint8ClampedArray, width: number, height: number, radius: number, passes = 3): void {
   const tmp = new Uint8ClampedArray(buf.length);
   const invDiv = 1 / (radius * 2 + 1);
-  for (let pass = 0; pass < 3; pass++) {
+  for (let pass = 0; pass < passes; pass++) {
     for (let y = 0; y < height; y++) {
       const row = y * width * 4;
       let sr = 0, sg = 0, sb = 0, sa = 0;
@@ -1110,10 +1121,12 @@ function boxBlurGaussian(buf: Uint8ClampedArray, width: number, height: number, 
  * as its own line-art shape, while theme styles (hand, crosshair, ...)
  * always draw their own glyph — see `cursorGlyphFor`.
  */
-/** Draws the cursor glyph — `alpha < 1` and `blurPx > 0` are the fade/blur
- * a fast move applies (see `SceneRenderer.cursorMotion`); a single soft
- * `ctx.filter` Gaussian blur, not repeated draws, so a fast move reads as
- * one smeared glyph rather than several distinct ghost copies. */
+/** Draws the cursor glyph — `blurPx > 0` (a fast move, from real movement
+ * or a zoom/pan transition sweeping it across the frame) renders it via
+ * `drawBlurredCursorGlyph` as a software Gaussian-blurred smear at full
+ * opacity, rather than fading it out. `alpha` is effectively always 1 now
+ * (see `cursorMotion`) but stays in the signature for the ripple code's
+ * sake. */
 function drawCursorGlyph(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -1128,10 +1141,12 @@ function drawCursorGlyph(
   const glyph = cursorGlyphFor(settings.style, type, settings.alwaysPointerCursor);
   const s = (CURSOR_SIZE_PX / 30) * pulseScale * cursorSizeMultiplier(settings.size);
 
+  if (blurPx > 0) {
+    drawBlurredCursorGlyph(ctx, x, y, s, glyph, preset, settings.rotationDeg, alpha, blurPx);
+    return;
+  }
+
   ctx.save();
-  // Applied before any transform below, so `blurPx` stays in real canvas
-  // pixels regardless of the glyph's own `scale(s, s)`.
-  if (blurPx > 0) ctx.filter = `blur(${blurPx}px)`;
   ctx.translate(x, y);
   if (settings.rotationDeg) ctx.rotate((settings.rotationDeg * Math.PI) / 180);
   ctx.scale(s, s);
@@ -1142,5 +1157,66 @@ function drawCursorGlyph(
   ctx.shadowBlur = 3;
   drawCursorShape(ctx, glyph, preset);
   ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+/** Reused scratch canvas for the blurred-cursor path — only one cursor is
+ * drawn at a time, so a module-level buffer is safe. */
+let cursorBlurCanvas: HTMLCanvasElement | null = null;
+
+/** Draws the cursor glyph blurred by a real Gaussian at full opacity. The
+ * glyph is rendered into a scratch canvas (translated to its center,
+ * rotated, and scaled exactly like the sharp draw), passed through
+ * `boxBlurGaussian`, then composited back at `(x, y)`. `ctx.filter` can't
+ * do this — it's a no-op here (see the comment at the top of this file).
+ * The scratch canvas is rendered at half resolution (`BLUR_RENDER_SCALE`)
+ * and blurred there before being stretched back up, exactly like the
+ * background blur: the smear has no fine detail to lose, and it keeps the
+ * per-frame cost at a few ms even though the glyph itself draws ~92px
+ * large (a full-res scratch would be a ~270px box and ~40ms). */
+const BLUR_RENDER_SCALE = 0.5;
+function drawBlurredCursorGlyph(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  s: number,
+  glyph: CursorGlyphId,
+  paint: CursorPaint,
+  rotationDeg: number,
+  alpha: number,
+  blurPx: number,
+): void {
+  const bounds = CURSOR_GLYPH_BOUNDS[glyph];
+  // Glyph's max extent from its anchor (the full diagonal covers corner-
+  // anchored shapes like the arrow), plus the blur reach and shadow room,
+  // in full-res screen px; then the half-res scratch is just that halved.
+  const fullExtent = Math.hypot(bounds.w, bounds.h) * s + blurPx + 5;
+  const fullSize = Math.ceil(fullExtent * 2);
+  const size = Math.ceil(fullSize * BLUR_RENDER_SCALE);
+  if (!cursorBlurCanvas) cursorBlurCanvas = document.createElement("canvas");
+  const scratch = cursorBlurCanvas;
+  if (scratch.width !== size) {
+    scratch.width = size;
+    scratch.height = size;
+  }
+  const sctx = scratch.getContext("2d");
+  if (!sctx) return;
+  sctx.setTransform(1, 0, 0, 1, 0, 0);
+  sctx.clearRect(0, 0, size, size);
+  sctx.translate(size / 2, size / 2);
+  if (rotationDeg) sctx.rotate((rotationDeg * Math.PI) / 180);
+  sctx.scale(s * BLUR_RENDER_SCALE, s * BLUR_RENDER_SCALE);
+  sctx.shadowColor = "rgba(0,0,0,0.4)";
+  sctx.shadowBlur = 3 * BLUR_RENDER_SCALE;
+  drawCursorShape(sctx, glyph, paint);
+  const imageData = sctx.getImageData(0, 0, size, size);
+  boxBlurGaussian(imageData.data, size, size, Math.max(1, Math.round(blurPx * BLUR_RENDER_SCALE)), 2);
+  sctx.putImageData(imageData, 0, 0);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(scratch, 0, 0, size, size, x - fullExtent, y - fullExtent, fullSize, fullSize);
   ctx.restore();
 }
