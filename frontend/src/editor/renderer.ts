@@ -72,21 +72,22 @@ const CURSOR_SIZE_PX = 92;
 // looks proportionally blurrier, which is the physically-correct
 // direction. Tuned by eye, not derived from anything physical — adjust the
 // constants below if the effect ever reads as too subtle or too smeary.
-const MAX_TRAIL_STEPS = 10;
+const MAX_TRAIL_STEPS = 3;
 const CONTENT_TRAIL_SENSITIVITY = 900;
 /** How opaque the *closest-to-current* echo gets at full intensity —
  * scaled down for earlier echoes so the trail actually fades out toward
- * its tail instead of every echo being equally solid. Kept low, with the
- * higher `MAX_TRAIL_STEPS`, so the echoes blend into a continuous smear
- * (a motion-blur streak) rather than a few distinct ghost copies. */
-const MAX_TRAIL_ALPHA = 0.35;
+ * its tail instead of every echo being equally solid. Kept low, with
+ * `MAX_TRAIL_STEPS`, so the echoes blend into a continuous smear (a
+ * motion-blur streak) rather than a few distinct ghost copies. */
+const MAX_TRAIL_ALPHA = 0.14;
 /** Largest Gaussian blur radius (canvas px) applied to a fast-moving
  * cursor glyph. Applied in software (`boxBlurGaussian`) — a real
  * `ctx.filter = blur(...)` is a silent no-op in this WKWebView even on
  * the glyph's primitive fill/stroke draws (verified pixel-identical), so
- * relying on it is exactly why the blur never showed up before. */
-const MAX_CURSOR_BLUR_PX = 18;
-const CURSOR_BLUR_SENSITIVITY = 5.5;
+ * relying on it is exactly why the blur never showed up before. Kept
+ * modest so a fast move reads as a soft smear, not a smudge. */
+const MAX_CURSOR_BLUR_PX = 4;
+const CURSOR_BLUR_SENSITIVITY = 2.5;
 /** `CursorSettings.loopCursorPosition`'s blend window, capped to 30% of
  * the clip for anything shorter than this. */
 const LOOP_BLEND_DURATION_US = 1_200_000;
