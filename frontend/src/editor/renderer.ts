@@ -17,7 +17,31 @@ const CLICK_RIPPLE_DURATION_US = 500_000;
  * (ARCHITECTURE.md, "Cursor rendering"). Big and readable, per the intent
  * of a screen-recording tool whose entire pitch is legibility. This is
  * the *base* size before `CursorSettings.size`'s multiplier is applied. */
-const CURSOR_SIZE_PX = 34;
+const CURSOR_SIZE_PX = 46;
+
+// Motion blur — both the content (during a zoom/pan transition) and the
+// cursor glyph (during a fast move) get a `ctx.filter = blur(...)` pass
+// proportional to how fast they're actually moving on screen right now,
+// fading to zero once whatever's moving settles. Canvas2D has no native
+// directional/per-object motion blur, so this is a frame-to-frame
+// approximation: each `draw()` call compares this frame's viewport/cursor
+// position to the *previous* call's (`lastViewport`/`lastCursorRenderPos`),
+// normalizes the delta by real elapsed wall-clock time (not video time, so
+// blur intensity naturally scales with playback rate too — 2x playback
+// looks proportionally blurrier, which is the physically-correct
+// direction), and maps that velocity to a blur radius. Tuned by eye, not
+// derived from anything physical — adjust the `*_SENSITIVITY` constants if
+// the effect ever reads as too subtle or too smeary.
+const MAX_CONTENT_BLUR_PX = 8;
+const CONTENT_BLUR_SENSITIVITY = 3000;
+const MAX_CURSOR_BLUR_PX = 8;
+const CURSOR_BLUR_SENSITIVITY = 3;
+/** Cursor opacity fades alongside the blur during a fast move ("faded
+ * movement" — a plain blur alone still reads as sharp-but-smeared; a
+ * slight fade sells the "moving too fast to fully see it" feel) — floors
+ * here rather than fading to fully invisible. */
+const MIN_CURSOR_ALPHA = 0.4;
+const CURSOR_FADE_SENSITIVITY = 0.22;
 /** `CursorSettings.loopCursorPosition`'s blend window, capped to 30% of
  * the clip for anything shorter than this. */
 const LOOP_BLEND_DURATION_US = 1_200_000;
@@ -120,6 +144,14 @@ export class SceneRenderer {
   // the `Image` objects across frames instead of re-creating (and
   // re-downloading) one every draw call.
   private imageCache = new Map<string, HTMLImageElement>();
+  // Previous frame's state, for the motion-blur velocity estimate — see
+  // the constants above. `null` means "no previous frame to compare
+  // against" (first frame after construction, or right after a seek —
+  // `resetAt` clears these so a jump-cut in position/time never reads as
+  // "fast motion" and blurs).
+  private lastViewport: Rect | null = null;
+  private lastCursorRenderPos: { x: number; y: number } | null = null;
+  private lastDrawWallClockMs: number | null = null;
 
   constructor(opts: SceneRendererOptions) {
     this.scaleFactor = opts.scaleFactor;
@@ -137,9 +169,15 @@ export class SceneRenderer {
   }
 
   /** Call after a scrub/seek so the next `draw` doesn't treat the jump as
-   * elapsed playback time (see `MotionEngine.reset`). */
+   * elapsed playback time (see `MotionEngine.reset`) — also clears the
+   * motion-blur trackers for the same reason (a seek's position jump
+   * isn't "fast motion", it's a teleport, and blurring it would look like
+   * a glitch rather than a transition). */
   resetAt(tUs: number): void {
     this.motionEngine.reset(tUs);
+    this.lastViewport = null;
+    this.lastCursorRenderPos = null;
+    this.lastDrawWallClockMs = null;
   }
 
   /** Called live when the user edits a zoom keyframe (move/trim) in the
@@ -186,6 +224,17 @@ export class SceneRenderer {
     // `transformAt` so it can be passed straight in.
     const { viewport } = this.motionEngine.transformAt(tUs, cursor ?? undefined);
 
+    // Real (wall-clock, not video) elapsed time since the last `draw` —
+    // the basis for both blur estimates below, so their intensity tracks
+    // actual on-screen motion speed regardless of frame rate or playback
+    // rate. `null` on the first frame (or right after a seek — see
+    // `resetAt`), where there's nothing to compare against yet.
+    const nowMs = performance.now();
+    const dtMs = this.lastDrawWallClockMs !== null ? Math.max(1, nowMs - this.lastDrawWallClockMs) : null;
+    const contentBlurPx = this.contentMotionBlurPx(viewport, dtMs);
+    this.lastViewport = viewport;
+    this.lastDrawWallClockMs = nowMs;
+
     // `viewport` is in point space; the video's actual pixels are at
     // `scaleFactor`x that (ARCHITECTURE.md, "Recording format").
     const sx = viewport.x * this.scaleFactor;
@@ -203,6 +252,11 @@ export class SceneRenderer {
     roundedRectPath(ctx, content, style.cornerRadius);
     ctx.clip();
     ctx.imageSmoothingEnabled = true;
+    // Motion blur during a zoom/pan transition (see the constants at the
+    // top of this file) — `ctx.filter` is part of the state `ctx.save()`/
+    // `ctx.restore()` already bracket here, so it doesn't need its own
+    // manual reset.
+    if (contentBlurPx > 0.15) ctx.filter = `blur(${contentBlurPx}px)`;
     ctx.drawImage(video, sx, sy, sw, sh, content.x, content.y, content.width, content.height);
     ctx.restore();
 
@@ -232,8 +286,44 @@ export class SceneRenderer {
     const cx = content.x + ((cursor.x - viewport.x) / viewport.width) * content.width;
     const cy = content.y + ((cursor.y - viewport.y) / viewport.height) * content.height;
 
+    // Motion blur/fade for a fast cursor move (see the constants at the
+    // top of this file) — in the same *content*/on-screen pixel space the
+    // glyph itself is drawn in, so the effect scales with zoom the same
+    // way the cursor's apparent speed does (a fast move reads as faster,
+    // and blurs more, while zoomed in).
+    const { blurPx: cursorBlurPx, alpha: cursorAlpha } = this.cursorMotion(cx, cy, dtMs);
+    this.lastCursorRenderPos = { x: cx, y: cy };
+
     if (cursorSettings.clickEffectEnabled) this.drawClickRipples(ctx, tUs, viewport, content);
-    drawCursorGlyph(ctx, cx, cy, this.clickPulseScaleAt(tUs), this.cursorTypeAt(tUs), cursorSettings);
+    drawCursorGlyph(ctx, cx, cy, this.clickPulseScaleAt(tUs), this.cursorTypeAt(tUs), cursorSettings, cursorBlurPx, cursorAlpha);
+  }
+
+  /** Blur radius (px) for the video content this frame, from how much
+   * `viewport` (the motion engine's resolved pan/zoom rect) moved/resized
+   * since the last `draw` call — see the constants at the top of this
+   * file. Zoom (size change) and pan (position change) are both folded
+   * in, `Math.log` on the size ratio so zooming in and out contribute
+   * symmetrically (a 2x-in and a 2x-out change should blur the same
+   * amount, not one being "bigger" than the other by whatever direction
+   * the raw ratio happens to point). */
+  private contentMotionBlurPx(viewport: Rect, dtMs: number | null): number {
+    if (!this.lastViewport || dtMs === null) return 0;
+    const scaleChange = Math.abs(Math.log(viewport.width / this.lastViewport.width));
+    const panChange = Math.hypot(viewport.x - this.lastViewport.x, viewport.y - this.lastViewport.y) / viewport.width;
+    const motionPerMs = (scaleChange + panChange) / dtMs;
+    return Math.min(MAX_CONTENT_BLUR_PX, motionPerMs * CONTENT_BLUR_SENSITIVITY);
+  }
+
+  /** Blur radius + opacity for the cursor glyph this frame, from how far
+   * it moved (in on-screen content pixels) since the last `draw` call —
+   * see the constants at the top of this file. */
+  private cursorMotion(cx: number, cy: number, dtMs: number | null): { blurPx: number; alpha: number } {
+    if (!this.lastCursorRenderPos || dtMs === null) return { blurPx: 0, alpha: 1 };
+    const distPx = Math.hypot(cx - this.lastCursorRenderPos.x, cy - this.lastCursorRenderPos.y);
+    const speedPerMs = distPx / dtMs;
+    const blurPx = Math.min(MAX_CURSOR_BLUR_PX, speedPerMs * CURSOR_BLUR_SENSITIVITY);
+    const alpha = Math.max(MIN_CURSOR_ALPHA, 1 - speedPerMs * CURSOR_FADE_SENSITIVITY);
+    return { blurPx, alpha };
   }
 
   /** Video content rect, centered in the canvas and inset by `padding` on
@@ -617,6 +707,8 @@ function drawCursorGlyph(
   pulseScale: number,
   type: CursorType,
   settings: CursorSettings,
+  motionBlurPx = 0,
+  alpha = 1,
 ): void {
   const effectiveType = settings.alwaysPointerCursor ? "arrow" : type;
   const paint = STYLE_PAINT[settings.style];
@@ -627,6 +719,13 @@ function drawCursorGlyph(
   if (settings.rotationDeg) ctx.rotate((settings.rotationDeg * Math.PI) / 180);
   ctx.scale(s, s);
   ctx.shadowColor = "rgba(0,0,0,0.4)";
+  ctx.globalAlpha = alpha;
+  // `ctx.filter`'s blur radius is in the *current* (already-scaled) user
+  // space, same as `ctx.lineWidth` — pre-dividing by `s` here keeps the
+  // blur's actual on-screen size matching `motionBlurPx` (computed in
+  // unscaled content pixels, see `SceneRenderer.cursorMotion`) regardless
+  // of how big the cursor itself is currently drawn.
+  if (motionBlurPx > 0.15) ctx.filter = `blur(${motionBlurPx / s}px)`;
 
   if (effectiveType === "iBeam" || effectiveType === "resizeLeftRight" || effectiveType === "resizeUpDown") {
     if (effectiveType === "iBeam") traceIBeamPath(ctx);
