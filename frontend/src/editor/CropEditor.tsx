@@ -163,16 +163,21 @@ export function applyHandleDelta(kind: HandleKind, start: CropRect, dx: number, 
   }
 }
 
-/** Exported for `MaskOverlay`'s reuse — see `applyHandleDelta`. */
+/** Exported for `MaskOverlay`'s reuse — see `applyHandleDelta`. Centers
+ * each handle on its corner/edge point using `translate-1/2` (50% of the
+ * handle's *own* rendered size), not a fixed pixel offset — so the exact
+ * same position data works whether a handle renders at Crop's `h-3 w-3` or
+ * some other, smaller size a different caller picks (see `MaskOverlay`,
+ * which reuses this at a smaller size than Crop's own handles). */
 export const HANDLE_POSITIONS: { kind: HandleKind; className: string; cursor: string }[] = [
-  { kind: "nw", className: "-left-1.5 -top-1.5", cursor: "cursor-nwse-resize" },
-  { kind: "ne", className: "-right-1.5 -top-1.5", cursor: "cursor-nesw-resize" },
-  { kind: "sw", className: "-left-1.5 -bottom-1.5", cursor: "cursor-nesw-resize" },
-  { kind: "se", className: "-right-1.5 -bottom-1.5", cursor: "cursor-nwse-resize" },
-  { kind: "n", className: "-top-1.5 left-1/2 -translate-x-1/2", cursor: "cursor-ns-resize" },
-  { kind: "s", className: "-bottom-1.5 left-1/2 -translate-x-1/2", cursor: "cursor-ns-resize" },
-  { kind: "w", className: "-left-1.5 top-1/2 -translate-y-1/2", cursor: "cursor-ew-resize" },
-  { kind: "e", className: "-right-1.5 top-1/2 -translate-y-1/2", cursor: "cursor-ew-resize" },
+  { kind: "nw", className: "left-0 top-0 -translate-x-1/2 -translate-y-1/2", cursor: "cursor-nwse-resize" },
+  { kind: "ne", className: "right-0 top-0 translate-x-1/2 -translate-y-1/2", cursor: "cursor-nesw-resize" },
+  { kind: "sw", className: "left-0 bottom-0 -translate-x-1/2 translate-y-1/2", cursor: "cursor-nesw-resize" },
+  { kind: "se", className: "right-0 bottom-0 translate-x-1/2 translate-y-1/2", cursor: "cursor-nwse-resize" },
+  { kind: "n", className: "top-0 left-1/2 -translate-x-1/2 -translate-y-1/2", cursor: "cursor-ns-resize" },
+  { kind: "s", className: "bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2", cursor: "cursor-ns-resize" },
+  { kind: "w", className: "left-0 top-1/2 -translate-x-1/2 -translate-y-1/2", cursor: "cursor-ew-resize" },
+  { kind: "e", className: "right-0 top-1/2 translate-x-1/2 -translate-y-1/2", cursor: "cursor-ew-resize" },
 ];
 
 /**

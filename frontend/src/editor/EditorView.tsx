@@ -189,14 +189,22 @@ export function EditorView({
   const cropModeRef = useRef(cropMode);
   cropModeRef.current = cropMode;
   // Read from `tick` without becoming a dependency of it — same pattern as
-  // the refs above. While a mask is selected (its `MaskOverlay` showing on
-  // the canvas), `tick` (a) forces the same full, unzoomed frame crop mode
-  // does — so the box can be positioned against a stable view instead of
-  // fighting an in-progress zoom/pan — and (b) excludes *that* mask from
-  // the masks it actually renders, so its own blur/dim doesn't obscure the
-  // very content being lined up against.
+  // the refs above.
   const selectedMaskIdRef = useRef(selectedMaskId);
   selectedMaskIdRef.current = selectedMaskId;
+  // Whether the selected mask is actually *in range* right now (current
+  // time within its own `[startS, endS)`) — mirrored from `maskPreviewActive`,
+  // computed further down (once `loaded`/`masks` exist) — see that
+  // constant's own doc comment for what this drives in `tick`.
+  const maskPreviewActiveRef = useRef(false);
+  // Whether a handle on the selected mask's `MaskOverlay` box is currently
+  // being dragged — set via `MaskOverlay`'s `onDraggingChange`. `tick` uses
+  // this (together with `maskPreviewActiveRef`) to briefly swap the mask's
+  // real, rendered effect out for raw content while a handle is actually
+  // held down, so e.g. a "sensitive" box can be lined up against picture
+  // that isn't already blurred out from under it — see `MaskEditor.tsx`'s
+  // module doc comment.
+  const maskDraggingRef = useRef(false);
   // The recording's own point-space dimensions (independent of crop,
   // resolution, or aspect ratio) — the coordinate space `doc.crop`/
   // `draftCrop` live in (see `crop.ts`). Set once `loaded` (where it's

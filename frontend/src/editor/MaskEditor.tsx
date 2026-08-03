@@ -1,25 +1,26 @@
-import { EyeOff } from "lucide-react";
 import { useEffect, useState, type RefObject } from "react";
 import { applyHandleDelta, HANDLE_POSITIONS } from "./CropEditor";
 import { clampCropRect, type CropRect } from "./crop";
-import type { MaskType } from "./masks";
 
 /**
  * The selected mask's on-canvas box — reuses `CropEditor.tsx`'s 8-handle
  * drag interaction (`applyHandleDelta`/`HANDLE_POSITIONS`) verbatim, since
  * "drag/resize a rect within a frame" is the exact same gesture crop
- * already implemented; only the *visual treatment* differs, and differs
- * *by mask type* (see `masks.ts`'s module doc comment for what each type
- * actually does):
- *
- *  - "highlight" looks like crop's own overlay (dim outside, clear inside)
- *    since that's literally the same effect: the box stays visible, the
- *    rest darkens.
- *  - "sensitive" doesn't dim the outside at all (nothing out there is
- *    affected) — instead the box itself gets a live `backdrop-blur` (a
- *    real, on-canvas preview of the blur the renderer bakes in, not just a
- *    placeholder) plus an eye-slash glyph, so it reads as "this part gets
- *    redacted" rather than "this part is excluded."
+ * already implemented. Deliberately does *not* draw its own approximation
+ * of the mask's actual effect (an earlier version did — a fixed-alpha dim/
+ * a CSS `backdrop-blur` standing in for the real thing) — that was its own
+ * source of bugs: it didn't reflect the mask's real `opacity`, ignored
+ * `disabled` entirely, and could never actually match the canvas's real
+ * rendering exactly. Instead, `EditorView` lets the *canvas itself* keep
+ * rendering the mask's real, actual effect underneath this overlay
+ * whenever it isn't being actively dragged (see its `tick`'s
+ * `suppressSelectedMaskRender`) — what you see *is* what gets exported,
+ * the same rule every other part of this app already follows — and only
+ * swaps to raw, unmasked content for the moment a handle is actually held
+ * down, so a "sensitive" box can be lined up against picture that isn't
+ * already blurred out from under it. This overlay's only job is the thin
+ * outline + drag handles on top of whichever of those two the canvas is
+ * currently showing.
  *
  * Unlike `CropOverlay` (a draft-then-Confirm/Discard workflow — see
  * `CropEditor.tsx`'s module doc comment), this edits `EditorDocument.masks`
@@ -31,7 +32,7 @@ export function MaskOverlay({
   rect,
   onChangeRect,
   onCommit,
-  type,
+  onDraggingChange,
   frameWidth,
   frameHeight,
   contentRect,
@@ -45,7 +46,11 @@ export function MaskOverlay({
   /** Turns whatever's accumulated since the last commit into a single undo
    * step (see `history.ts`) — called once, on drag release. */
   onCommit: () => void;
-  type: MaskType;
+  /** Whether *any* handle is currently being held down — `EditorView`
+   * mirrors this into a ref its render loop reads, to decide whether to
+   * show the mask's real effect or briefly suppress it (see the module
+   * doc comment). */
+  onDraggingChange: (dragging: boolean) => void;
   /** The *effective* frame's point-space dimensions (the confirmed crop's
    * own size once one exists, the full recording otherwise) — see
    * `MaskClip.rect`'s doc comment for why this differs from
@@ -116,6 +121,7 @@ export function MaskOverlay({
     const startClientY = e.clientY;
     const start = rect;
     target.setPointerCapture(pointerId);
+    onDraggingChange(true);
 
     const handleMove = (ev: PointerEvent) => {
       const dx = (ev.clientX - startClientX) / scaleX;
@@ -127,6 +133,7 @@ export function MaskOverlay({
       target.removeEventListener("pointerup", handleEnd);
       target.removeEventListener("pointercancel", handleEnd);
       if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
+      onDraggingChange(false);
       onCommit();
     };
     target.addEventListener("pointermove", handleMove);
@@ -136,43 +143,16 @@ export function MaskOverlay({
 
   return (
     <div className="pointer-events-none absolute" style={{ left: box.left, top: box.top, width: box.width, height: box.height }}>
-      {type === "highlight" && (
-        <>
-          <div className="absolute inset-x-0 top-0 bg-black/70" style={{ height: top }} />
-          <div className="absolute inset-x-0 bottom-0 bg-black/70" style={{ top: top + height }} />
-          <div className="absolute left-0 bg-black/70" style={{ top, height, width: left }} />
-          <div className="absolute right-0 bg-black/70" style={{ top, height, left: left + width }} />
-        </>
-      )}
-
       <div
-        className={`pointer-events-auto absolute cursor-move border-2 ${
-          type === "sensitive" ? "border-rose-400 bg-white/5 backdrop-blur-md" : "border-amber-300"
-        }`}
+        className="pointer-events-auto absolute cursor-move border border-transparent"
         style={{ left, top, width, height }}
         onPointerDown={(e) => beginDrag(e, "move")}
       >
-        {type === "sensitive" ? (
-          <div className="pointer-events-none flex h-full w-full items-center justify-center">
-            <EyeOff className="h-5 w-5 text-white/80 drop-shadow" />
-          </div>
-        ) : (
-          // Rule-of-thirds grid, same alignment aid `CropOverlay` shows.
-          <>
-            {[1 / 3, 2 / 3].map((f) => (
-              <div key={`v${f}`} className="absolute inset-y-0 w-px border-l border-dashed border-white/40" style={{ left: `${f * 100}%` }} />
-            ))}
-            {[1 / 3, 2 / 3].map((f) => (
-              <div key={`h${f}`} className="absolute inset-x-0 h-px border-t border-dashed border-white/40" style={{ top: `${f * 100}%` }} />
-            ))}
-          </>
-        )}
-
         {HANDLE_POSITIONS.map(({ kind, className, cursor }) => (
           <div
             key={kind}
             onPointerDown={(e) => beginDrag(e, kind)}
-            className={`absolute h-3 w-3 rounded-full border-2 border-white bg-neutral-900 ${className} ${cursor}`}
+            className={`absolute h-2 w-2 rounded-full border border-white bg-neutral-900 ${className} ${cursor}`}
           />
         ))}
       </div>
