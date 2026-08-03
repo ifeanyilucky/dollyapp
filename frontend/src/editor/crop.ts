@@ -46,3 +46,22 @@ export function clampCropRect(rect: CropRect, frameWidth: number, frameHeight: n
 export function isFullFrameCrop(crop: CropRect, frameWidth: number, frameHeight: number): boolean {
   return crop.x === 0 && crop.y === 0 && crop.width === frameWidth && crop.height === frameHeight;
 }
+
+/** Largest same-`aspect` rect centered within the full frame — backs
+ * `CropEditor`'s "Select..." preset dropdown (reuses `ASPECT_RATIO_PRESETS`
+ * rather than inventing a second, parallel preset list). `aspect === null`
+ * ("Original") is the full frame itself. */
+export function centeredCropForAspect(frameWidth: number, frameHeight: number, aspect: number | null): CropRect {
+  if (aspect === null) return fullFrameCrop(frameWidth, frameHeight);
+  let width = frameWidth;
+  let height = width / aspect;
+  if (height > frameHeight) {
+    height = frameHeight;
+    width = height * aspect;
+  }
+  return clampCropRect(
+    { x: (frameWidth - width) / 2, y: (frameHeight - height) / 2, width, height },
+    frameWidth,
+    frameHeight,
+  );
+}
