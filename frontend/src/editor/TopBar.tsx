@@ -46,6 +46,8 @@ export function TopBar({
   onToggleTimeline,
   previewMode,
   onTogglePreviewMode,
+  hasCrop,
+  onOpenCropEditor,
   playbackRate,
   onCyclePlaybackRate,
   onExport,
@@ -74,6 +76,14 @@ export function TopBar({
   onToggleTimeline: () => void;
   previewMode: boolean;
   onTogglePreviewMode: () => void;
+  /** Whether a crop is currently confirmed (`doc.crop !== null`) — lights
+   * up the Crop button so it reads as "applied," same idea as the aspect
+   * ratio dropdown showing the active preset. */
+  hasCrop: boolean;
+  /** Opens `CropEditor` (see `EditorView`'s `enterCropMode`) — re-opening
+   * it while a crop is already confirmed edits that one, rather than
+   * starting over from the full frame. */
+  onOpenCropEditor: () => void;
   playbackRate: number;
   onCyclePlaybackRate: () => void;
   onExport: () => void;
@@ -302,13 +312,17 @@ export function TopBar({
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
-        <span
-          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-neutral-600"
-          title="Crop — not available yet"
+        <button
+          type="button"
+          onClick={onOpenCropEditor}
+          className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium transition-colors ${
+            hasCrop ? "bg-indigo-500/20 text-indigo-400" : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
+          }`}
+          title="Crop"
         >
           <Crop className="h-3.5 w-3.5" />
           Crop
-        </span>
+        </button>
         <span
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-neutral-600"
           title="Mask — not available yet"

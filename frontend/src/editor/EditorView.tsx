@@ -5,7 +5,7 @@ import { generateZoomKeyframes, splitKeyframeAt, type ZoomKeyframe } from "../mo
 import { aspectRatioPreset } from "./aspect";
 import { deleteRecording, loadRecording, revealInFinder, type LoadedRecording } from "./api";
 import { playClickSound } from "./clickSound";
-import { CropEditor } from "./CropEditor";
+import { CropFooter, CropOverlay, CropToolbar } from "./CropEditor";
 import { clampCropRect, fullFrameCrop, isFullFrameCrop, type CropRect } from "./crop";
 import { CursorPanel } from "./CursorPanel";
 import { DEFAULT_DOCUMENT, type EditorDocument } from "./document";
@@ -754,11 +754,46 @@ export function EditorView({
   // handles against (see its own doc comment).
   const { width: canvasWidth, height: canvasHeight } = !cropMode && crop ? crop : fullFrameSize;
 
+  /** The top bar's "Crop" button — seeds the draft from the already-
+   * confirmed crop if there is one (re-editing), or the full frame if not
+   * (first crop). */
+  function enterCropMode() {
+    setDraftCrop(crop ?? fullFrameCrop(fullFrameSize.width, fullFrameSize.height));
+    setCropMode(true);
+  }
+
+  /** "Confirm changes" — one `history.set` (a discrete edit, same as every
+   * other document change), then back to the normal view. */
+  function confirmCrop() {
+    if (draftCrop) {
+      const next = isFullFrameCrop(draftCrop, fullFrameSize.width, fullFrameSize.height) ? null : draftCrop;
+      setDoc((d) => ({ ...d, crop: next }));
+    }
+    setCropMode(false);
+    setDraftCrop(null);
+  }
+
+  /** "Discard changes" (or closing crop mode any other way) — the draft is
+   * local state that was never written to `doc`, so there's nothing to
+   * undo; just stop editing it. */
+  function discardCrop() {
+    setCropMode(false);
+    setDraftCrop(null);
+  }
+
   const selectedSlice = slices.find((s) => s.id === selectedSliceId);
   const selectedZoomKeyframe = selectedZoomIndex !== null ? zoomKeyframes[selectedZoomIndex] : undefined;
 
   return (
     <div className="relative flex h-screen w-screen flex-col bg-neutral-950 text-neutral-300">
+      {cropMode && draftCrop && (
+        <CropToolbar
+          draftCrop={draftCrop}
+          onChangeDraft={setDraftCrop}
+          fullFrameWidth={fullFrameSize.width}
+          fullFrameHeight={fullFrameSize.height}
+        />
+      )}
       <TopBar
         title={bundlePath.split("/").pop() ?? bundlePath}
         aspectRatioId={aspectRatioId}
@@ -769,6 +804,8 @@ export function EditorView({
         onToggleTimeline={() => setShowTimeline((v) => !v)}
         previewMode={previewMode}
         onTogglePreviewMode={togglePreviewMode}
+        hasCrop={crop !== null}
+        onOpenCropEditor={enterCropMode}
         playbackRate={playbackRate}
         onCyclePlaybackRate={cyclePlaybackRate}
         onExport={() => void handleExport()}
@@ -790,19 +827,30 @@ export function EditorView({
        * without it, shrinking the window doesn't shrink the canvas, it
        * just gets silently clipped by `overflow-hidden` instead. */}
       <div className="flex min-h-0 flex-1 items-stretch justify-center gap-4 overflow-hidden p-6">
-        <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center">
+        <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center">
           {/* Click to play/pause — the only way to control playback while
            * the timeline (which normally owns the play button) is hidden,
            * whether that's preview mode or just "Show editor timeline"
-           * unchecked. Harmless as a global affordance either way. */}
+           * unchecked. Harmless as a global affordance either way. Disabled
+           * while actively cropping so a click meant for a drag handle
+           * can't also toggle playback underneath it. */}
           <canvas
             ref={canvasRef}
             width={canvasWidth}
             height={canvasHeight}
-            onClick={togglePlay}
-            className="max-h-full max-w-full cursor-pointer rounded-lg"
-            title={isPlaying ? "Pause" : "Play"}
+            onClick={cropMode ? undefined : togglePlay}
+            className={`max-h-full max-w-full rounded-lg ${cropMode ? "" : "cursor-pointer"}`}
+            title={cropMode ? undefined : isPlaying ? "Pause" : "Play"}
           />
+          {cropMode && draftCrop && (
+            <CropOverlay
+              draftCrop={draftCrop}
+              onChangeDraft={setDraftCrop}
+              fullFrameWidth={fullFrameSize.width}
+              fullFrameHeight={fullFrameSize.height}
+              canvasRef={canvasRef}
+            />
+          )}
         </div>
         {showSidebar && (
           <>
@@ -908,6 +956,8 @@ export function EditorView({
           />
         </div>
       )}
+
+      {cropMode && <CropFooter onConfirm={confirmCrop} onDiscard={discardCrop} />}
     </div>
   );
 }
