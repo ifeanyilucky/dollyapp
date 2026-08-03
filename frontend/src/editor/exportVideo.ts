@@ -9,6 +9,7 @@ import { BackgroundAudioPlayer, decodeAudioFromUrl, getAmbientBuffer, isAmbientT
 import type { CropRect } from "./crop";
 import type { CursorSettings } from "./cursorSettings";
 import { masksActiveAt, type MaskClip } from "./masks";
+import { fixMp4ColorRange } from "./mp4ColorRange";
 import { NarrationPlayer } from "./narration";
 import { SceneRenderer } from "./renderer";
 import { computeOutputSize, resolutionPreset, type ResolutionId } from "./resolution";
@@ -404,7 +405,7 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
     const blob = new Blob(chunks, { type: container.mimeType || "video/webm" });
     if (blob.size === 0) throw new Error("The exporter produced an empty file.");
 
-    await writeExportFile(new Uint8Array(await blob.arrayBuffer()));
+    await writeExportFile(fixMp4ColorRange(new Uint8Array(await blob.arrayBuffer())));
     return dest;
   } finally {
     running = false;
