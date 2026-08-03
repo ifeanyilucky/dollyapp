@@ -15,14 +15,10 @@ import { initialSlices, resizeSlices, sliceAt, splitSliceAt, type ClipSlice } fr
 import { SliceEditorPanel } from "./SliceEditorPanel";
 import { StylePanel } from "./StylePanel";
 import { PreviewControls } from "./PreviewControls";
+import { computeOutputSize, resolutionPreset, type ResolutionId } from "./resolution";
 import { Timeline } from "./Timeline";
 import { nextPlaybackRate, TopBar } from "./TopBar";
 import { ZoomEditorPanel } from "./ZoomEditorPanel";
-
-// Fallback box used only for the first render, before the wrapper's real
-// size has been measured (see the `ResizeObserver` effect below).
-const FALLBACK_PREVIEW_WIDTH = 760;
-const FALLBACK_PREVIEW_HEIGHT = 560;
 
 /**
  * Post-recording preview: plays `screen.mov` through the same motion
@@ -106,18 +102,12 @@ export function EditorView({
     redo: redoDoc,
     patch: patchDoc,
   } = useHistoryState<EditorDocument>(DEFAULT_DOCUMENT);
-  const { style, showCursor, aspectRatioId, zoomKeyframes, clipStartS, clipEndS, slices, cursorSettings } = doc;
+  const { style, showCursor, aspectRatioId, resolution, zoomKeyframes, clipStartS, clipEndS, slices, cursorSettings } =
+    doc;
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const canvasWrapperRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<SceneRenderer | null>(null);
-  // Tracks the actual on-screen size of the empty area around the canvas —
-  // fed straight into `canvasWidth`/`canvasHeight` below so the preview
-  // always fills the space it's given (resizing the window, opening a
-  // slice/zoom editor panel, etc.) instead of sitting at a fixed size with
-  // empty space around it.
-  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   // Style/cursor-visibility/slice changes can fire rapidly (slider drags,
   // slice edits) or need to be read from a rAF loop that shouldn't
   // restart every tick — refs let `tick` always see the latest value
@@ -232,28 +222,6 @@ export function EditorView({
       void audioCtxRef.current?.close();
     };
   }, []);
-
-  // Keeps `containerSize` in sync with the wrapper's actual rendered box —
-  // fires on window resize, but also on anything else that changes the
-  // available space (opening a slice/zoom editor panel narrows it, closing
-  // one widens it again), which a plain `window.resize` listener would miss.
-  // Keyed on `loaded`: the wrapper div only exists once the "Loading…"
-  // placeholder is replaced by the real editor UI, so an empty deps array
-  // here would fire once too early (ref still null, no-op forever) and
-  // never re-run once the div actually mounts.
-  useEffect(() => {
-    if (!loaded) return;
-    const el = canvasWrapperRef.current;
-    if (!el) return;
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      const { width, height } = entry.contentRect;
-      setContainerSize({ width, height });
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [loaded]);
 
   // Render loop: reads `video.currentTime` directly every animation
   // frame rather than relying on the `timeupdate` event, which fires far
@@ -524,6 +492,7 @@ export function EditorView({
         showCursor,
         cursorSettings,
         aspectRatioId,
+        resolution,
         onProgress: (done, total) => setExportProgress(total > 0 ? done / total : 0),
       });
       if (dest) {
@@ -539,6 +508,14 @@ export function EditorView({
 
   function handleSplitClip(atS: number) {
     setDoc((d) => ({ ...d, slices: splitSliceAt(d.slices, atS) }));
+  }
+
+  /** `ResolutionPicker`'s `onChange` — rendered from both `Timeline` (next
+   * to the split/scissors button) and `PreviewControls` (preview mode
+   * hides `Timeline` entirely), so this is one shared handler rather than
+   * two copies of the same `setDoc` call. */
+  function changeResolution(id: ResolutionId) {
+    setDoc((d) => ({ ...d, resolution: id }));
   }
 
   function handleSplitZoom(index: number, atT: number) {
@@ -651,23 +628,21 @@ export function EditorView({
 
   const sourceAspect = loaded.meta.display.widthPx / loaded.meta.display.heightPx;
   const outputAspect = aspectRatioPreset(aspectRatioId).ratio ?? sourceAspect;
-  // Fit the *chosen output* aspect ratio (not necessarily the source
-  // recording's own shape — see the aspect-ratio switcher in `TopBar`)
-  // within the actual measured wrapper box, both ways — a vertical/square
-  // output needs a height cap too, not just the width cap a landscape one
-  // would ever hit. Sized off `containerSize` (live, via the
-  // `ResizeObserver` effect above) rather than a fixed constant, so the
-  // preview always fills whatever space it's actually given instead of
-  // sitting at a fixed size with empty space around it; falls back to a
-  // fixed box only for the one frame before the observer's first callback.
-  const boxWidth = containerSize.width || FALLBACK_PREVIEW_WIDTH;
-  const boxHeight = containerSize.height || FALLBACK_PREVIEW_HEIGHT;
-  let canvasWidth = boxWidth;
-  let canvasHeight = Math.round(canvasWidth / outputAspect);
-  if (canvasHeight > boxHeight) {
-    canvasHeight = boxHeight;
-    canvasWidth = Math.round(canvasHeight * outputAspect);
-  }
+  // The canvas element's `width`/`height` *attributes* (as opposed to its
+  // CSS size, set separately below) are its actual render resolution — the
+  // same `computeOutputSize` calculation `exportVideo` uses, so what the
+  // preview renders at is genuinely what gets exported, not a separate
+  // on-screen-box-driven guess (ARCHITECTURE.md, "preview and export must
+  // never diverge"). The CSS `max-h-full max-w-full` below then scales
+  // that pixel buffer down to fit whatever on-screen space is actually
+  // available, exactly like an `<img>` would — the browser downsamples for
+  // display without touching the underlying render resolution.
+  const { width: canvasWidth, height: canvasHeight } = computeOutputSize(
+    resolutionPreset(resolution).longEdge,
+    loaded.meta.display.widthPx,
+    loaded.meta.display.heightPx,
+    outputAspect,
+  );
 
   const selectedSlice = slices.find((s) => s.id === selectedSliceId);
   const selectedZoomKeyframe = selectedZoomIndex !== null ? zoomKeyframes[selectedZoomIndex] : undefined;
@@ -705,7 +680,7 @@ export function EditorView({
        * without it, shrinking the window doesn't shrink the canvas, it
        * just gets silently clipped by `overflow-hidden` instead. */}
       <div className="flex min-h-0 flex-1 items-stretch justify-center gap-4 overflow-hidden p-6">
-        <div ref={canvasWrapperRef} className="flex min-h-0 min-w-0 flex-1 items-center justify-center">
+        <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center">
           {/* Click to play/pause — the only way to control playback while
            * the timeline (which normally owns the play button) is hidden,
            * whether that's preview mode or just "Show editor timeline"
@@ -771,6 +746,10 @@ export function EditorView({
           visible={previewControlsVisible}
           onPointerEnter={handlePreviewControlsPointerEnter}
           onPointerLeave={handlePreviewControlsPointerLeave}
+          resolution={resolution}
+          onChangeResolution={changeResolution}
+          sourceWidthPx={loaded.meta.display.widthPx}
+          sourceHeightPx={loaded.meta.display.heightPx}
         />
       )}
 
@@ -812,6 +791,10 @@ export function EditorView({
             onSelectSlice={selectSlice}
             onSplitZoomKeyframe={handleSplitZoom}
             onSelectZoomKeyframe={selectZoomKeyframe}
+            resolution={resolution}
+            onChangeResolution={changeResolution}
+            sourceWidthPx={loaded.meta.display.widthPx}
+            sourceHeightPx={loaded.meta.display.heightPx}
           />
         </div>
       )}

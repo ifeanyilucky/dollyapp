@@ -1,6 +1,8 @@
 import { Pause, Play, Scissors, SkipBack, SkipForward } from "lucide-react";
 import { useRef, useState } from "react";
 import type { ZoomKeyframe } from "../motion-engine";
+import { ResolutionPicker } from "./ResolutionPicker";
+import type { ResolutionId } from "./resolution";
 import type { ClipSlice } from "./slices";
 import { formatTime } from "./time";
 
@@ -52,6 +54,10 @@ export function Timeline({
   onSelectSlice,
   onSplitZoomKeyframe,
   onSelectZoomKeyframe,
+  resolution,
+  onChangeResolution,
+  sourceWidthPx,
+  sourceHeightPx,
 }: {
   duration: number;
   currentTime: number;
@@ -89,6 +95,15 @@ export function Timeline({
   onSelectSlice: (id: string) => void;
   onSplitZoomKeyframe: (index: number, atT: number) => void;
   onSelectZoomKeyframe: (index: number) => void;
+  /** Output resolution — see `ResolutionPicker`'s doc comment for why this
+   * lives next to the split/scissors button and also drives `exportVideo`,
+   * not just the preview. */
+  resolution: ResolutionId;
+  onChangeResolution: (id: ResolutionId) => void;
+  /** The source recording's native pixels — disables any tier
+   * `ResolutionPicker` couldn't actually reach without upscaling. */
+  sourceWidthPx: number;
+  sourceHeightPx: number;
 }) {
   const [splitArmed, setSplitArmed] = useState(false);
   const [hoverS, setHoverS] = useState<number | null>(null);
@@ -302,6 +317,12 @@ export function Timeline({
         >
           <Scissors className="h-3.5 w-3.5" />
         </button>
+        <ResolutionPicker
+          resolution={resolution}
+          onChange={onChangeResolution}
+          sourceWidthPx={sourceWidthPx}
+          sourceHeightPx={sourceHeightPx}
+        />
 
         <span className="ml-2 font-mono text-xs text-neutral-600">{formatTime(safeDuration)}</span>
       </div>

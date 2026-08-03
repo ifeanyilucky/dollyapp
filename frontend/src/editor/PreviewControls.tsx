@@ -1,4 +1,6 @@
 import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
+import { ResolutionPicker } from "./ResolutionPicker";
+import type { ResolutionId } from "./resolution";
 import { formatTime } from "./time";
 
 /**
@@ -29,6 +31,10 @@ export function PreviewControls({
   visible,
   onPointerEnter,
   onPointerLeave,
+  resolution,
+  onChangeResolution,
+  sourceWidthPx,
+  sourceHeightPx,
 }: {
   isPlaying: boolean;
   currentTime: number;
@@ -42,6 +48,14 @@ export function PreviewControls({
    * can never fade out from under an in-progress interaction. */
   onPointerEnter: () => void;
   onPointerLeave: () => void;
+  /** Same `ResolutionPicker` `Timeline` renders next to its split/scissors
+   * button — preview mode hides `Timeline` entirely, so this is the only
+   * other place it's reachable from. Both drive the same `EditorDocument`
+   * field, so they can never disagree with each other. */
+  resolution: ResolutionId;
+  onChangeResolution: (id: ResolutionId) => void;
+  sourceWidthPx: number;
+  sourceHeightPx: number;
 }) {
   const safeDuration = duration > 0 ? duration : 1;
 
@@ -88,6 +102,13 @@ export function PreviewControls({
         <span className="ml-2 select-none font-mono text-xs text-neutral-400">
           {formatTime(currentTime)} <span className="text-neutral-600">/</span> {formatTime(safeDuration)}
         </span>
+        <div className="mx-1 h-5 w-px bg-neutral-800" />
+        <ResolutionPicker
+          resolution={resolution}
+          onChange={onChangeResolution}
+          sourceWidthPx={sourceWidthPx}
+          sourceHeightPx={sourceHeightPx}
+        />
       </div>
     </div>
   );
