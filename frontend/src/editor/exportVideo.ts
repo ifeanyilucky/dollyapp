@@ -5,10 +5,10 @@ import { setExportDestination, writeExportFile, type LoadedRecording } from "./a
 import { aspectRatioPreset, type AspectRatioId } from "./aspect";
 import type { CursorSettings } from "./cursorSettings";
 import { SceneRenderer } from "./renderer";
+import { computeOutputSize, resolutionPreset, type ResolutionId } from "./resolution";
 import { sliceAt, type ClipSlice } from "./slices";
 import type { StyleSettings } from "./style";
 
-const MAX_EXPORT_DIMENSION = 1920;
 const TARGET_BITRATE = 12_000_000;
 
 export interface ExportOptions {
@@ -23,6 +23,9 @@ export interface ExportOptions {
   showCursor: boolean;
   cursorSettings: CursorSettings;
   aspectRatioId: AspectRatioId;
+  /** Output resolution tier — same one the live preview canvas rendered
+   * at (see `resolution.ts`); "preview and export must never diverge". */
+  resolution: ResolutionId;
   /** Called roughly once per exported frame with (seconds done, total
    * seconds) — for a progress indicator. */
   onProgress?: (exportedSeconds: number, totalSeconds: number) => void;
@@ -139,17 +142,20 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
   const { loaded } = opts;
   const { display } = loaded.meta;
 
-  // Resolution: cap the longer dimension at 1920 and never upscale past the
-  // source pixels; the canvas matches the *output* aspect (not the source's)
-  // so the background fills the whole frame, exactly like the preview.
+  // Resolution: caps the longer dimension at the chosen tier and never
+  // upscales past the source pixels (see `computeOutputSize`'s doc
+  // comment) — the exact same computation the live preview canvas used,
+  // so the export is what the preview showed, not a separate guess. The
+  // canvas matches the *output* aspect (not the source's) so the
+  // background fills the whole frame, exactly like the preview.
   const sourceAspect = display.widthPx / display.heightPx;
   const outputAspect = aspectRatioPreset(opts.aspectRatioId).ratio ?? sourceAspect;
-  let width = Math.min(MAX_EXPORT_DIMENSION, display.widthPx);
-  let height = Math.round(width / outputAspect);
-  if (height > Math.min(MAX_EXPORT_DIMENSION, display.heightPx)) {
-    height = Math.min(MAX_EXPORT_DIMENSION, display.heightPx);
-    width = Math.round(height * outputAspect);
-  }
+  const { width, height } = computeOutputSize(
+    resolutionPreset(opts.resolution).longEdge,
+    display.widthPx,
+    display.heightPx,
+    outputAspect,
+  );
   if (width < 2 || height < 2) {
     throw new Error("The export frame would be too small to encode.");
   }

@@ -1,6 +1,7 @@
 import type { ZoomKeyframe } from "../motion-engine";
 import type { AspectRatioId } from "./aspect";
 import { DEFAULT_CURSOR_SETTINGS, type CursorSettings } from "./cursorSettings";
+import { DEFAULT_RESOLUTION, type ResolutionId } from "./resolution";
 import type { ClipSlice } from "./slices";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
 
@@ -15,6 +16,9 @@ export interface EditorDocument {
   style: StyleSettings;
   showCursor: boolean;
   aspectRatioId: AspectRatioId;
+  /** Output resolution tier (also what the live preview canvas renders at
+   * — see `resolution.ts`'s `computeOutputSize`). */
+  resolution: ResolutionId;
   zoomKeyframes: ZoomKeyframe[];
   /** Effective in/out of the whole clip (video-relative seconds) — both 0
    * until the video's metadata loads (see `EditorView`'s `patch` call on
@@ -29,6 +33,7 @@ export const DEFAULT_DOCUMENT: EditorDocument = {
   style: DEFAULT_STYLE,
   showCursor: true,
   aspectRatioId: "original",
+  resolution: DEFAULT_RESOLUTION,
   zoomKeyframes: [],
   clipStartS: 0,
   clipEndS: 0,
