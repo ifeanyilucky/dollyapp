@@ -1,10 +1,14 @@
 import type { CursorEvent, CursorSample, CursorTrack, CursorType } from "../bundle/types";
 import {
+  CURSOR_ANIMATION_PRESETS,
   MotionEngine,
   smoothCursorTrack,
+  type CursorAnimationStyle,
   type FrameSize,
+  type ScreenAnimationStyle,
   type ZoomKeyframe,
 } from "../motion-engine";
+import { DEFAULT_ANIMATION_SETTINGS, type AnimationSettings } from "./animationSettings";
 import { cursorSizeMultiplier, DEFAULT_CURSOR_SETTINGS, type CursorSettings, type CursorStyleId } from "./cursorSettings";
 import type { CropRect } from "./crop";
 import type { MaskClip } from "./masks";
@@ -166,6 +170,14 @@ export interface SceneRendererOptions {
    * its own copy internally; see `setZoomKeyframes` for how edits reach
    * the already-constructed motion engine live). */
   zoomKeyframes: ZoomKeyframe[];
+  /** Animations panel's "Screen animation style" — passed straight to
+   * `MotionEngine`'s constructor; see `setScreenAnimationStyle` for the
+   * live-switch path. Defaults match `MotionEngine`'s own default. */
+  screenAnimationStyle?: ScreenAnimationStyle;
+  /** Animations panel's "Cursor animation style" — picks the One Euro
+   * filter preset `smoothedSamples` is built from, or bypasses filtering
+   * entirely for "none" (see `setCursorAnimationStyle`). */
+  cursorAnimationStyle?: CursorAnimationStyle;
 }
 
 /** Re-anchors every position-bearing sample/event in `track` from global
@@ -202,8 +214,13 @@ export class SceneRenderer {
   /** Same samples, before the One Euro filter — used instead of
    * `smoothedSamples` for whatever time range a slice's
    * `disableSmoothMovement` override is active, e.g. to keep a drop-down
-   * menu's precise click alignment instead of a smoothed approximation. */
+   * menu's precise click alignment instead of a smoothed approximation.
+   * Also what `smoothedSamples` gets rebuilt from whenever
+   * `setCursorAnimationStyle` picks a new filter preset live. */
   private rawSamples: CursorSample[];
+  /** Mirrors `SceneRendererOptions.cursorAnimationStyle` — kept only so
+   * `setCursorAnimationStyle` doesn't need it re-passed in. */
+  private cursorAnimationStyle: CursorAnimationStyle;
   private events: CursorEvent[];
   private scaleFactor: number;
   /** The source aspect `contentRect` falls back to when `outputAspect`
@@ -283,10 +300,39 @@ export class SceneRenderer {
     // `createMotionEngine` (which would generate its own, independent
     // copy from the cursor track) — see `SceneRendererOptions.zoomKeyframes`'s
     // doc comment for why there must only ever be one array of these.
-    this.motionEngine = new MotionEngine(this.effectiveFrame, opts.zoomKeyframes, opts.outputAspect);
-    this.smoothedSamples = smoothCursorTrack(cursorTrack.samples);
+    this.motionEngine = new MotionEngine(
+      this.effectiveFrame,
+      opts.zoomKeyframes,
+      opts.outputAspect,
+      opts.screenAnimationStyle,
+    );
+    this.cursorAnimationStyle = opts.cursorAnimationStyle ?? DEFAULT_ANIMATION_SETTINGS.cursorAnimationStyle;
     this.rawSamples = cursorTrack.samples;
+    this.smoothedSamples = this.buildSmoothedSamples(this.cursorAnimationStyle);
     this.events = cursorTrack.events;
+  }
+
+  /** "none" skips the One Euro filter entirely and draws the raw recorded
+   * path — every other style just picks which filter preset to smooth
+   * with (see `CURSOR_ANIMATION_PRESETS`). */
+  private buildSmoothedSamples(style: CursorAnimationStyle): CursorSample[] {
+    if (style === "none") return this.rawSamples;
+    return smoothCursorTrack(this.rawSamples, CURSOR_ANIMATION_PRESETS[style]);
+  }
+
+  /** Called live when the user switches "Screen animation style" in the
+   * Animations panel — see `MotionEngine.setScreenAnimationStyle`. */
+  setScreenAnimationStyle(style: ScreenAnimationStyle): void {
+    this.motionEngine.setScreenAnimationStyle(style);
+  }
+
+  /** Called live when the user switches "Cursor animation style" — rebuilds
+   * `smoothedSamples` from the untouched `rawSamples` rather than
+   * re-filtering the already-smoothed output (which would compound the
+   * previous style's smoothing into the new one). */
+  setCursorAnimationStyle(style: CursorAnimationStyle): void {
+    this.cursorAnimationStyle = style;
+    this.smoothedSamples = this.buildSmoothedSamples(style);
   }
 
   /** Call after a scrub/seek so the next `draw` doesn't treat the jump as
