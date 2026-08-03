@@ -9,7 +9,14 @@ import {
   type ZoomKeyframe,
 } from "../motion-engine";
 import { DEFAULT_ANIMATION_SETTINGS, type AnimationSettings } from "./animationSettings";
-import { cursorSizeMultiplier, DEFAULT_CURSOR_SETTINGS, type CursorSettings, type CursorStyleId } from "./cursorSettings";
+import {
+  cursorGlyphFor,
+  cursorSizeMultiplier,
+  cursorStylePreset,
+  drawCursorShape,
+  DEFAULT_CURSOR_SETTINGS,
+  type CursorSettings,
+} from "./cursorSettings";
 import type { CropRect } from "./crop";
 import type { MaskClip } from "./masks";
 import type { SliceCursorOverride } from "./slices";
@@ -1094,80 +1101,14 @@ function boxBlurGaussian(buf: Uint8ClampedArray, width: number, height: number, 
   }
 }
 
-/** Fill/stroke treatment per `CursorSettings.style` — applied to the
- * arrow/dot glyph; the type-specific shapes below (I-beam, resize) just
- * borrow `fill` as a single stroke color, since they're line-art rather
- * than filled shapes. */
-const STYLE_PAINT: Record<CursorStyleId, { fill: string | null; stroke: string; strokeWidth: number }> = {
-  outline: { fill: "#ffffff", stroke: "rgba(0,0,0,0.55)", strokeWidth: 1.5 },
-  thin: { fill: "#ffffff", stroke: "rgba(0,0,0,0.35)", strokeWidth: 0.75 },
-  dot: { fill: "#9ca3af", stroke: "rgba(0,0,0,0.3)", strokeWidth: 1 },
-  solidBlack: { fill: "#111111", stroke: "rgba(255,255,255,0.25)", strokeWidth: 1 },
-  solidGray: { fill: "#6b7280", stroke: "rgba(0,0,0,0.3)", strokeWidth: 1 },
-};
-
-function traceArrowPath(ctx: CanvasRenderingContext2D): void {
-  ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.lineTo(0, 22);
-  ctx.lineTo(5.5, 17.5);
-  ctx.lineTo(9, 25.5);
-  ctx.lineTo(12, 24);
-  ctx.lineTo(8.7, 16.5);
-  ctx.lineTo(15, 16.5);
-  ctx.closePath();
-}
-
-function traceDotPath(ctx: CanvasRenderingContext2D): void {
-  ctx.beginPath();
-  ctx.arc(6, 8, 7, 0, Math.PI * 2);
-}
-
-/** Classic text-cursor I-beam: a vertical bar with top/bottom serifs. */
-function traceIBeamPath(ctx: CanvasRenderingContext2D): void {
-  ctx.beginPath();
-  ctx.moveTo(-5, 0);
-  ctx.lineTo(5, 0);
-  ctx.moveTo(0, 0);
-  ctx.lineTo(0, 24);
-  ctx.moveTo(-5, 24);
-  ctx.lineTo(5, 24);
-}
-
-/** A double-headed arrow, horizontal or vertical — window/pane resize. */
-function traceResizePath(ctx: CanvasRenderingContext2D, horizontal: boolean): void {
-  const len = 13;
-  const head = 5;
-  ctx.beginPath();
-  if (horizontal) {
-    ctx.moveTo(-len, 0);
-    ctx.lineTo(len, 0);
-    ctx.moveTo(-len + head, -head);
-    ctx.lineTo(-len, 0);
-    ctx.lineTo(-len + head, head);
-    ctx.moveTo(len - head, -head);
-    ctx.lineTo(len, 0);
-    ctx.lineTo(len - head, head);
-  } else {
-    ctx.moveTo(0, -len);
-    ctx.lineTo(0, len);
-    ctx.moveTo(-head, -len + head);
-    ctx.lineTo(0, -len);
-    ctx.lineTo(head, -len + head);
-    ctx.moveTo(-head, len - head);
-    ctx.lineTo(0, len);
-    ctx.lineTo(head, len - head);
-  }
-}
-
 /**
  * Redraws a cursor glyph rather than compositing captured pixels
  * (ARCHITECTURE.md, "Cursor rendering") — fixed apparent size regardless
- * of zoom, so it's always legible. `type` (the recorded `CursorType`)
- * picks the base shape unless `settings.alwaysPointerCursor` pins it to
- * the arrow; `settings.style` picks the arrow/dot's paint treatment (the
- * line-art shapes — I-beam, resize — always use the style's `fill` color
- * as a single stroke, since there's nothing to fill).
+ * of zoom, so it's always legible. `settings.style` selects a whole glyph +
+ * paint treatment (see `cursorSettings.ts`); the pointer-shaped styles
+ * stay type-aware so a recorded I-beam/resize `CursorType` still renders
+ * as its own line-art shape, while theme styles (hand, crosshair, ...)
+ * always draw their own glyph — see `cursorGlyphFor`.
  */
 /** Draws the cursor glyph — `alpha < 1` and `blurPx > 0` are the fade/blur
  * a fast move applies (see `SceneRenderer.cursorMotion`); a single soft
@@ -1183,8 +1124,8 @@ function drawCursorGlyph(
   alpha = 1,
   blurPx = 0,
 ): void {
-  const effectiveType = settings.alwaysPointerCursor ? "arrow" : type;
-  const paint = STYLE_PAINT[settings.style];
+  const preset = cursorStylePreset(settings.style);
+  const glyph = cursorGlyphFor(settings.style, type, settings.alwaysPointerCursor);
   const s = (CURSOR_SIZE_PX / 30) * pulseScale * cursorSizeMultiplier(settings.size);
 
   ctx.save();
@@ -1196,35 +1137,10 @@ function drawCursorGlyph(
   ctx.scale(s, s);
   ctx.shadowColor = "rgba(0,0,0,0.4)";
   ctx.globalAlpha = alpha;
-
-  if (effectiveType === "iBeam" || effectiveType === "resizeLeftRight" || effectiveType === "resizeUpDown") {
-    if (effectiveType === "iBeam") traceIBeamPath(ctx);
-    else traceResizePath(ctx, effectiveType === "resizeLeftRight");
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = paint.fill ?? paint.stroke;
-    ctx.shadowBlur = 2;
-    ctx.stroke();
-  } else {
-    // arrow, pointingHand, closedHand, other — pointing/closed hand fall
-    // back to the arrow shape rather than shipping bespoke (and likely
-    // low-quality, hand-drawn) hand iconography for a secondary case.
-    if (settings.style === "dot") traceDotPath(ctx);
-    else traceArrowPath(ctx);
-    ctx.shadowBlur = 3;
-    if (paint.fill) {
-      ctx.fillStyle = paint.fill;
-      ctx.fill();
-    }
-    ctx.shadowBlur = 0;
-    if (paint.strokeWidth > 0) {
-      ctx.strokeStyle = paint.stroke;
-      ctx.lineWidth = paint.strokeWidth;
-      ctx.stroke();
-    }
-  }
-
+  // `drawCursorShape` re-zeroes shadowBlur before its own strokes, so this
+  // default only shades the fills.
+  ctx.shadowBlur = 3;
+  drawCursorShape(ctx, glyph, preset);
   ctx.shadowBlur = 0;
   ctx.restore();
 }

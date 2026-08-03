@@ -1,27 +1,15 @@
 import { ChevronDown, EyeOff } from "lucide-react";
-import { useState, type ComponentType, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import {
+  CURSOR_GLYPH_BOUNDS,
   CURSOR_STYLE_PRESETS,
   DEFAULT_CURSOR_SETTINGS,
+  drawCursorShape,
   type CursorSettings,
-  type CursorStyleId,
+  type CursorStylePreset,
 } from "./cursorSettings";
 import { Slider } from "./Slider";
 import { Toggle } from "./Toggle";
-
-/** Same arrow path `renderer.ts`'s `traceArrowPath` draws (translated to
- * SVG path data with a small margin so the stroke doesn't clip) — the
- * swatch previews should look like what actually gets drawn, not an
- * approximation of it. */
-const ARROW_SVG_PATH = "M2,2 L2,24 L7.5,19.5 L11,27.5 L14,26 L10.7,18.5 L17,18.5 Z";
-
-const STYLE_SWATCH_PAINT: Record<CursorStyleId, { fill: string; stroke: string; strokeWidth: number }> = {
-  outline: { fill: "#ffffff", stroke: "#000000c0", strokeWidth: 1.5 },
-  thin: { fill: "#ffffff", stroke: "#00000090", strokeWidth: 0.75 },
-  dot: { fill: "#9ca3af", stroke: "#00000060", strokeWidth: 1 },
-  solidBlack: { fill: "#111111", stroke: "#ffffff40", strokeWidth: 1 },
-  solidGray: { fill: "#6b7280", stroke: "#00000060", strokeWidth: 1 },
-};
 
 /**
  * Cursor customization — size, style, and the behavior toggles below it
@@ -80,16 +68,15 @@ export function CursorPanel({
 
       <div>
         <h3 className="mb-2.5 text-[13px] font-medium text-neutral-200">Cursor style</h3>
-        <div className="flex gap-1.5">
+        <div className="grid grid-cols-5 gap-1.5">
           {CURSOR_STYLE_PRESETS.map((preset) => {
-            const paint = STYLE_SWATCH_PAINT[preset.id];
             const active = settings.style === preset.id;
             return (
               <button
                 key={preset.id}
                 type="button"
                 onClick={() => set("style", preset.id)}
-                className={`flex h-14 w-14 items-center justify-center rounded-lg border transition-colors ${
+                className={`flex h-12 w-12 items-center justify-center rounded-lg border transition-colors ${
                   active
                     ? "border-indigo-400 bg-neutral-900"
                     : "border-neutral-800 bg-neutral-900/60 hover:border-neutral-700"
@@ -97,19 +84,7 @@ export function CursorPanel({
                 aria-label={preset.label}
                 title={preset.label}
               >
-                {preset.id === "dot" ? (
-                  <span className="h-3.5 w-3.5 rounded-full" style={{ backgroundColor: paint.fill }} />
-                ) : (
-                  <svg viewBox="0 0 20 30" className="h-6 w-6">
-                    <path
-                      d={ARROW_SVG_PATH}
-                      fill={paint.fill}
-                      stroke={paint.stroke}
-                      strokeWidth={paint.strokeWidth}
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                )}
+                <CursorSwatch preset={preset} />
               </button>
             );
           })}
@@ -185,6 +160,31 @@ export function CursorPanel({
       </button>
     </div>
   );
+}
+
+/** Renders a cursor style's glyph into a small canvas (via the *same*
+ * `drawCursorShape` the live cursor uses) so the preview exactly matches
+ * what gets drawn, sized from the glyph's bounds rather than a fixed
+ * viewBox. */
+function CursorSwatch({ preset }: { preset: CursorStylePreset }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const size = 44;
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
+    const bounds = CURSOR_GLYPH_BOUNDS[preset.glyph];
+    const scale = size / Math.max(bounds.w, bounds.h);
+    ctx.translate(size / 2 - (bounds.x + bounds.w / 2) * scale, size / 2 - (bounds.y + bounds.h / 2) * scale);
+    ctx.scale(scale, scale);
+    drawCursorShape(ctx, preset.glyph, preset);
+  }, [preset]);
+  return <canvas ref={ref} className="h-[44px] w-[44px]" aria-hidden="true" />;
 }
 
 function ToggleRow({
