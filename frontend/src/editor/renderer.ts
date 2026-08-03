@@ -20,23 +20,32 @@ const CLICK_RIPPLE_DURATION_US = 500_000;
  * the *base* size before `CursorSettings.size`'s multiplier is applied. */
 const CURSOR_SIZE_PX = 92;
 
-// Motion blur — both the content (during a zoom/pan transition) and the
-// cursor glyph (during a fast move) get a *directional* trailing-echo blur
-// proportional to how fast they're actually moving on screen right now,
-// fading to nothing once whatever's moving settles. This is deliberately
-// not `ctx.filter = blur(...)`: a uniform Gaussian filter blurs equally in
-// every direction, which isn't what motion blur actually looks like (a
-// smeared *streak* behind the direction of travel, sharp at the leading
-// edge) — and Canvas2D `filter` combined with a clipped draw is exactly
-// the kind of thing that quietly no-ops on some WebKit builds, which is
-// the entire class of bug this sidesteps: nothing here depends on `filter`
-// support at all. Instead, each `draw()` compares this frame's viewport/
-// cursor position to the *previous* call's (`lastViewport`/
-// `lastCursorRenderPos`), and — when they've moved enough — draws several
+// Motion blur — the content (during a zoom/pan transition) gets a
+// *directional* trailing-echo blur proportional to how fast the viewport is
+// actually moving on screen right now, fading to nothing once it settles.
+// This is deliberately not `ctx.filter = blur(...)` for the content: a
+// uniform Gaussian filter blurs equally in every direction, which isn't
+// what motion blur actually looks like (a smeared *streak* behind the
+// direction of travel) — and Canvas2D `filter` combined with a clipped
+// draw (the content draw is clipped to the rounded content rect) is
+// exactly the kind of thing that quietly no-ops on some WebKit builds.
+// Instead, each `draw()` compares this frame's viewport to the *previous*
+// call's (`lastViewport`), and — when it's moved enough — draws several
 // semi-transparent "echoes" interpolated between the two positions before
 // the real, fully-opaque current-frame draw on top. That's the same
 // technique a photographed zoom-burst/light-trail effect actually is:
-// multiple exposures of the same subject at different positions, blended.
+// multiple exposures of the same subject at different positions, blended —
+// and it reads correctly for a full video frame, since the overlapping
+// copies share almost all their pixels.
+//
+// The cursor glyph is a different case: it's a small, single, recognizable
+// icon shape (arrow/dot with a hard-edged fill+stroke), not a continuous
+// image, so the same "draw it several times at partial opacity" technique
+// just reads as several distinct ghost cursors rather than a blur. The
+// cursor draw also isn't inside a clip region (only the content draw
+// above is), so the WebKit clip+filter concern doesn't apply to it — a
+// real `ctx.filter = blur(...)` pass works for the cursor and gives an
+// actual soft, single smear instead of duplicated icons.
 // Velocity is normalized by real elapsed wall-clock time (not video time),
 // so intensity naturally scales with playback rate too — 2x playback
 // looks proportionally blurrier, which is the physically-correct
@@ -44,17 +53,18 @@ const CURSOR_SIZE_PX = 92;
 // constants below if the effect ever reads as too subtle or too smeary.
 const MAX_TRAIL_STEPS = 6;
 const CONTENT_TRAIL_SENSITIVITY = 900;
-const CURSOR_TRAIL_SENSITIVITY = 0.6;
 /** How opaque the *closest-to-current* echo gets at full intensity —
- * scaled down for earlier echoes (see `drawMotionTrail`) so the trail
- * actually fades out toward its tail instead of every echo being equally
- * solid. */
+ * scaled down for earlier echoes so the trail actually fades out toward
+ * its tail instead of every echo being equally solid. */
 const MAX_TRAIL_ALPHA = 0.5;
+/** Largest Gaussian blur radius (canvas px) applied to a fast-moving
+ * cursor glyph. */
+const MAX_CURSOR_BLUR_PX = 14;
+const CURSOR_BLUR_SENSITIVITY = 5.5;
 /** Cursor opacity fades alongside the blur during a fast move ("faded
- * movement" — a trail alone still reads as sharp-but-smeared; a slight
- * fade on the real, current-position glyph sells the "moving too fast to
- * fully see it" feel) — floors here rather than fading to fully
- * invisible. */
+ * movement" — a blur alone still reads as sharp-but-smeared; a slight
+ * fade on the glyph sells the "moving too fast to fully see it" feel) —
+ * floors here rather than fading to fully invisible. */
 const MIN_CURSOR_ALPHA = 0.3;
 const CURSOR_FADE_SENSITIVITY = 0.32;
 /** `CursorSettings.loopCursorPosition`'s blend window, capped to 30% of
@@ -399,32 +409,19 @@ export class SceneRenderer {
     const cx = content.x + ((cursor.x - viewport.x) / viewport.width) * content.width;
     const cy = content.y + ((cursor.y - viewport.y) / viewport.height) * content.height;
 
-    // Motion trail/fade for a fast cursor move (see the constants at the
-    // top of this file) — in the same *content*/on-screen pixel space the
-    // glyph itself is drawn in, so the effect scales with zoom the same
-    // way the cursor's apparent speed does (a fast move reads as faster,
-    // and trails more, while zoomed in).
-    const { steps: cursorTrailSteps, alpha: cursorAlpha } = this.cursorMotion(cx, cy, dtMs);
-    const lastCursorPosForTrail = this.lastCursorRenderPos;
+    // Blur/fade for a fast cursor move (see the constants and comment at
+    // the top of this file) — in the same *content*/on-screen pixel space
+    // the glyph itself is drawn in, so the effect scales with zoom the
+    // same way the cursor's apparent speed does (a fast move reads as
+    // faster, and blurrier, while zoomed in).
+    const { blurPx: cursorBlurPx, alpha: cursorAlpha } = this.cursorMotion(cx, cy, dtMs);
     this.lastCursorRenderPos = { x: cx, y: cy };
 
     if (cursorSettings.clickEffectEnabled) this.drawClickRipples(ctx, tUs, viewport, content);
 
     const type = this.cursorTypeAt(tUs);
     const pulseScale = this.clickPulseScaleAt(tUs);
-    // Echoes interpolated between the last drawn position and this one,
-    // faintest first, *underneath* the real, current-position glyph drawn
-    // below — same trailing-echo technique the content draw above uses,
-    // and for the same reason (no dependence on `ctx.filter` support).
-    if (cursorTrailSteps > 0 && lastCursorPosForTrail) {
-      for (let i = 1; i <= cursorTrailSteps; i++) {
-        const t = i / (cursorTrailSteps + 1);
-        const tx = lastCursorPosForTrail.x + (cx - lastCursorPosForTrail.x) * t;
-        const ty = lastCursorPosForTrail.y + (cy - lastCursorPosForTrail.y) * t;
-        drawCursorGlyph(ctx, tx, ty, pulseScale, type, cursorSettings, t * MAX_TRAIL_ALPHA);
-      }
-    }
-    drawCursorGlyph(ctx, cx, cy, pulseScale, type, cursorSettings, cursorAlpha);
+    drawCursorGlyph(ctx, cx, cy, pulseScale, type, cursorSettings, cursorAlpha, cursorBlurPx);
   }
 
   /** How many trailing echoes to draw for the video content this frame,
@@ -444,17 +441,17 @@ export class SceneRenderer {
     return Math.round(intensity * MAX_TRAIL_STEPS);
   }
 
-  /** Trail-echo count + opacity for the cursor glyph this frame, from how
-   * far it moved (in on-screen content pixels) since the last `draw` call
-   * — see the constants at the top of this file. */
-  private cursorMotion(cx: number, cy: number, dtMs: number | null): { steps: number; alpha: number } {
-    if (!this.lastCursorRenderPos || dtMs === null) return { steps: 0, alpha: 1 };
+  /** Gaussian blur radius + opacity for the cursor glyph this frame, from
+   * how far it moved (in on-screen content pixels) since the last `draw`
+   * call — see the constants at the top of this file. */
+  private cursorMotion(cx: number, cy: number, dtMs: number | null): { blurPx: number; alpha: number } {
+    if (!this.lastCursorRenderPos || dtMs === null) return { blurPx: 0, alpha: 1 };
     const distPx = Math.hypot(cx - this.lastCursorRenderPos.x, cy - this.lastCursorRenderPos.y);
     const speedPerMs = distPx / dtMs;
-    const intensity = Math.min(1, speedPerMs * CURSOR_TRAIL_SENSITIVITY);
-    const steps = Math.round(intensity * MAX_TRAIL_STEPS);
+    const intensity = Math.min(1, speedPerMs * CURSOR_BLUR_SENSITIVITY);
+    const blurPx = intensity * MAX_CURSOR_BLUR_PX;
     const alpha = Math.max(MIN_CURSOR_ALPHA, 1 - speedPerMs * CURSOR_FADE_SENSITIVITY);
-    return { steps, alpha };
+    return { blurPx, alpha };
   }
 
   /** `outputAspect` when set (the viewport is reframed to match it, see
@@ -832,10 +829,10 @@ function traceResizePath(ctx: CanvasRenderingContext2D, horizontal: boolean): vo
  * line-art shapes — I-beam, resize — always use the style's `fill` color
  * as a single stroke, since there's nothing to fill).
  */
-/** Draws one cursor glyph "echo" — `alpha < 1` is how the motion-blur
- * trail's earlier positions fade relative to the real, current-position
- * call (see `SceneRenderer.draw`, which calls this once per trail step
- * plus once more for the real position). */
+/** Draws the cursor glyph — `alpha < 1` and `blurPx > 0` are the fade/blur
+ * a fast move applies (see `SceneRenderer.cursorMotion`); a single soft
+ * `ctx.filter` Gaussian blur, not repeated draws, so a fast move reads as
+ * one smeared glyph rather than several distinct ghost copies. */
 function drawCursorGlyph(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -844,12 +841,16 @@ function drawCursorGlyph(
   type: CursorType,
   settings: CursorSettings,
   alpha = 1,
+  blurPx = 0,
 ): void {
   const effectiveType = settings.alwaysPointerCursor ? "arrow" : type;
   const paint = STYLE_PAINT[settings.style];
   const s = (CURSOR_SIZE_PX / 30) * pulseScale * cursorSizeMultiplier(settings.size);
 
   ctx.save();
+  // Applied before any transform below, so `blurPx` stays in real canvas
+  // pixels regardless of the glyph's own `scale(s, s)`.
+  if (blurPx > 0) ctx.filter = `blur(${blurPx}px)`;
   ctx.translate(x, y);
   if (settings.rotationDeg) ctx.rotate((settings.rotationDeg * Math.PI) / 180);
   ctx.scale(s, s);
