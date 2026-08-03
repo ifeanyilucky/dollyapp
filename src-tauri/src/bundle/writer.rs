@@ -4,10 +4,12 @@ use anyhow::{Context, Result};
 
 use super::{names, CursorTrack, RecordingMeta};
 
-/// Creates and populates a `*.motionrec` bundle directory. Capture writes
-/// `screen.mov` (and optionally webcam/audio) directly via its own
-/// file handles; this only owns `meta.json` and `cursor.json`, written once
-/// capture has stopped.
+/// Creates and populates the staging directory for one recording — a plain
+/// directory in the app's cache while capture is in flight. Capture writes
+/// `screen.mov` (and optionally webcam/audio) directly via its own file
+/// handles; this only owns `meta.json` and `cursor.json`, written once
+/// capture has stopped. `recorder::macos::stop` then packs the whole
+/// directory into a single `.dol` file via `container::pack_recording`.
 pub struct BundleWriter {
     root: PathBuf,
 }

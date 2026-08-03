@@ -120,6 +120,7 @@ mod tests {
         let mut video_bytes = Vec::new();
         video.read_to_end(&mut video_bytes).unwrap();
         assert_eq!(video_bytes, b"fake-video-bytes");
+        drop(video);
 
         assert!(archive.by_name(names::MIC_AUDIO).is_err());
     }

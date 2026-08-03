@@ -5,6 +5,7 @@ pub mod clock;
 pub mod commands;
 pub mod cursor;
 mod dock;
+pub mod dol_protocol;
 pub mod encode;
 pub mod export;
 pub mod fs;
@@ -23,9 +24,15 @@ pub fn run() {
         .with_writer(std::io::stderr)
         .init();
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_dialog::init())
+    // The `dol://` custom scheme (serves `screen.mov`/`mic.wav` out of a
+    // packed `.dol` file) — no `pipe` on this tauri version, so the builder
+    // is threaded through `register` explicitly.
+    let builder = dol_protocol::register(
+        tauri::Builder::default()
+            .plugin(tauri_plugin_shell::init())
+            .plugin(tauri_plugin_dialog::init()),
+    );
+    builder
         .invoke_handler(tauri::generate_handler![
             commands::screen_recording_permission_status,
             commands::microphone_permission_status,

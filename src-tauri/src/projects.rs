@@ -69,23 +69,28 @@ pub fn open_last(app: &AppHandle) {
     }
 }
 
-/// Native "choose a folder" dialog, defaulted to the recordings directory,
-/// for opening a `.motionrec` bundle that isn't in the recent list (or was
+/// Native "choose a file" dialog, defaulted to the recordings directory,
+/// for opening a `.dol` recording that isn't in the recent list (or was
 /// moved elsewhere). Asynchronous — resolves via callback whenever the user
 /// finishes with the dialog, same as every other `tauri-plugin-dialog` call
-/// in this codebase.
+/// in this codebase. Legacy `*.motionrec` directories aren't selectable
+/// here, but any still on disk open fine from the recent-list submenu.
 pub fn open_project_dialog(app: AppHandle) {
     use tauri_plugin_dialog::DialogExt;
 
-    let mut file_dialog = app.dialog().file().set_title("Open Recording");
+    let mut file_dialog = app
+        .dialog()
+        .file()
+        .set_title("Open Recording")
+        .add_filter("Dolly recording", &["dol"]);
     if let Ok(dir) = recordings_dir(&app) {
         file_dialog = file_dialog.set_directory(dir);
     }
 
     let app_for_callback = app.clone();
-    file_dialog.pick_folder(move |folder| {
-        let Some(folder) = folder else { return };
-        let Ok(path) = folder.into_path() else { return };
+    file_dialog.pick_file(move |file| {
+        let Some(file) = file else { return };
+        let Ok(path) = file.into_path() else { return };
         open_in_editor(&app_for_callback, &path);
     });
 }

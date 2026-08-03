@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter, Manager};
 
 use super::RECORDING_STATE_EVENT;
 use crate::audio::MicRecorder;
+use crate::bundle::container::pack_recording;
 use crate::bundle::{names, BundleWriter, DisplayInfo, RecordingMeta};
 use crate::capture::{self, FrameGrabber};
 use crate::clock::Clock;
@@ -17,7 +18,15 @@ use crate::encode::MovWriter;
 const FPS: u32 = 60;
 
 struct ActiveRecording {
-    bundle_dir: PathBuf,
+    /// Where capture writes `screen.mov`/`mic.wav` and stop writes
+    /// `meta.json`/`cursor.json` while the recording is in flight — a plain
+    /// directory in the app's cache, never in the user's recordings folder,
+    /// so nothing multi-file is ever visible there. Packed into `dol_path`
+    /// (and removed) the moment capture stops.
+    staging_dir: PathBuf,
+    /// The single `.dol` file this recording becomes: `~/Movies/Dolly/
+    /// Recording N.dol` — the only thing the user ever sees.
+    dol_path: PathBuf,
     clock: Clock,
     /// From `capture::scale_factor`, for the target this recording
     /// actually started against — read once at start rather than at stop,
@@ -115,24 +124,24 @@ pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
     let crop_area = area.map(|a| capture::crop_area_for_target(a, &target));
 
     let clock = Clock::start();
-    let bundle_dir = new_bundle_dir(app)?;
-    std::fs::create_dir_all(&bundle_dir)
-        .with_context(|| format!("creating {}", bundle_dir.display()))?;
+    let (staging_dir, dol_path) = new_bundle_paths(app)?;
+    std::fs::create_dir_all(&staging_dir)
+        .with_context(|| format!("creating {}", staging_dir.display()))?;
 
     cursor::start_on_main_thread(app, clock)?;
 
     let capture_stop = Arc::new(AtomicBool::new(false));
     let capture_thread = {
         let capture_stop = Arc::clone(&capture_stop);
-        let bundle_dir = bundle_dir.clone();
+        let staging_dir = staging_dir.clone();
         std::thread::Builder::new()
             .name("dolly-capture".into())
-            .spawn(move || run_capture(clock, capture_stop, bundle_dir, target, crop_area))
+            .spawn(move || run_capture(clock, capture_stop, staging_dir, target, crop_area))
             .context("failed to spawn capture thread")?
     };
 
     let mic = if *state.mic_enabled.lock().unwrap() {
-        match MicRecorder::start(bundle_dir.join(names::MIC_AUDIO)) {
+        match MicRecorder::start(staging_dir.join(names::MIC_AUDIO)) {
             Ok(mic) => Some(mic),
             Err(e) => {
                 // Mic failing to start shouldn't take down the whole
@@ -146,7 +155,8 @@ pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
     };
 
     *guard = Some(ActiveRecording {
-        bundle_dir,
+        staging_dir,
+        dol_path,
         clock,
         scale_factor,
         origin,
@@ -199,7 +209,7 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
 
     let cursor_track = cursor::stop_on_main_thread(app).await?;
 
-    let writer = BundleWriter::create(&active.bundle_dir)?;
+    let writer = BundleWriter::create(&active.staging_dir)?;
     writer.write_cursor_track(&cursor_track)?;
     writer.write_meta(&RecordingMeta {
         version: RecordingMeta::CURRENT_VERSION,
@@ -219,10 +229,35 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
         fps: FPS,
     })?;
     tracing::info!(
-        "wrote {} frames to {}",
+        "wrote {} frames to staging at {}",
         outcome.frame_count,
-        active.bundle_dir.display()
+        active.staging_dir.display()
     );
+
+    // Pack the staging directory into the single `.dol` file the user
+    // actually sees, then remove the staging dir. `pack_recording` failing
+    // never loses the just-finished recording — the staging dir is left in
+    // the cache (where nothing else on disk is a loose-file bundle) and the
+    // frontend still opens it via the legacy-directory path.
+    let finished_path = match pack_recording(&active.staging_dir, &active.dol_path) {
+        Ok(()) => {
+            if let Err(e) = std::fs::remove_dir_all(&active.staging_dir) {
+                tracing::error!(
+                    "failed to remove staging dir {}: {e}",
+                    active.staging_dir.display()
+                );
+            }
+            active.dol_path.clone()
+        }
+        Err(e) => {
+            tracing::error!(
+                "failed to pack recording into .dol ({}); leaving staging dir in place",
+                active.dol_path.display()
+            );
+            tracing::error!("  {e}");
+            active.staging_dir.clone()
+        }
+    };
 
     // The floating toolbar (where recording starts/stops) and the editor
     // (which shows the result) are different windows — swap which one's
@@ -231,7 +266,7 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
     // three end up in the same place afterward.
     let _ = app.emit(
         super::RECORDING_FINISHED_EVENT,
-        active.bundle_dir.display().to_string(),
+        finished_path.display().to_string(),
     );
     crate::toolbar::hide(app);
     if let Some(window) = app.get_webview_window("main") {
@@ -239,7 +274,7 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
         let _ = window.set_focus();
     }
 
-    Ok(active.bundle_dir)
+    Ok(finished_path)
 }
 
 /// Stops capture and cursor tracking like `stop`, but throws the result
@@ -268,10 +303,10 @@ pub async fn discard(app: &AppHandle, state: &RecorderState) -> Result<()> {
     }
     let _ = cursor::stop_on_main_thread(app).await;
 
-    if let Err(e) = std::fs::remove_dir_all(&active.bundle_dir) {
+    if let Err(e) = std::fs::remove_dir_all(&active.staging_dir) {
         tracing::error!(
             "failed to remove discarded recording at {}: {e}",
-            active.bundle_dir.display()
+            active.staging_dir.display()
         );
     }
 
@@ -375,13 +410,29 @@ fn run_capture(
     })
 }
 
-fn new_bundle_dir(app: &AppHandle) -> Result<PathBuf> {
+/// Picks the two paths one recording maps onto, sharing a single base name:
+/// a staging directory in the app's cache (where `screen.mov`/`mic.wav` are
+/// written live and `meta.json`/`cursor.json` land at stop) and the final
+/// `.dol` file in `~/Movies/Dolly` it gets packed into. The recordings dir
+/// is created here too (it's the `.dol`'s destination and must exist before
+/// `pack_recording` runs).
+fn new_bundle_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf)> {
     let base = crate::projects::recordings_dir(app)?;
+    std::fs::create_dir_all(&base)
+        .with_context(|| format!("creating {}", base.display()))?;
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
+    let name = format!("Recording {timestamp}");
 
-    Ok(base.join(format!("Recording {timestamp}.motionrec")))
+    let staging = app
+        .path()
+        .app_cache_dir()
+        .context("could not resolve the app cache directory")?
+        .join("staging")
+        .join(format!("{name}.motionrec"));
+
+    Ok((staging, base.join(format!("{name}.dol"))))
 }
