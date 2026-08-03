@@ -73,16 +73,18 @@ export function EditorView({
   const [exportProgress, setExportProgress] = useState(0);
   // Layout visibility — the top bar's eye-icon dropdown. Plain UI state,
   // not part of `EditorDocument`: it's not undoable and isn't exported.
-  // `showSidebar`/`showTimeline` are independent, persisted-for-the-session
-  // toggles (both default visible); `previewMode` ("Enter preview mode" in
-  // the same dropdown — unrelated to `previewTimeS` above, which is the
-  // *timeline hover* preview) is a one-shot override that forces both
-  // hidden without touching their underlying values, so exiting it
-  // restores whatever they were set to. See the render below, which ANDs
-  // `!previewMode` into both.
+  // Independent, persisted-for-the-session toggles (both default visible).
+  // "Preview mode" (unrelated to `previewTimeS` above, which is the
+  // *timeline hover* preview) is deliberately *not* a third piece of state
+  // — it's derived (`previewMode` below) as "both are off," so the eye
+  // dropdown's checkboxes are always an honest reflection of what's
+  // actually on screen: entering preview mode really does uncheck both,
+  // and manually re-checking either one exits preview mode, rather than a
+  // separate override flag the checkboxes would otherwise have to be
+  // reconciled against.
   const [showSidebar, setShowSidebar] = useState(true);
   const [showTimeline, setShowTimeline] = useState(true);
-  const [previewMode, setPreviewMode] = useState(false);
+  const previewMode = !showSidebar && !showTimeline;
   // Whether `PreviewControls` (the floating play/pause bar) is faded in —
   // see the mouse-activity effect below, next to the other preview-mode
   // state. Only meaningful while `previewMode` is true.
@@ -344,7 +346,7 @@ export function EditorView({
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        if (previewMode) setPreviewMode(false);
+        if (previewMode) togglePreviewMode();
         return;
       }
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
@@ -543,6 +545,16 @@ export function EditorView({
     setActiveTool(id);
   }
 
+  /** The eye dropdown's "Enter/Exit preview mode" (and Escape, below) —
+   * `previewMode` is derived from `showSidebar`/`showTimeline` rather than
+   * its own state (see their declaration), so entering/exiting it just
+   * means flipping both at once. */
+  function togglePreviewMode() {
+    const next = !previewMode;
+    setShowSidebar(next);
+    setShowTimeline(next);
+  }
+
   function updateSlice(next: ClipSlice) {
     setDoc((d) => ({ ...d, slices: d.slices.map((s) => (s.id === next.id ? next : s)) }));
   }
@@ -658,7 +670,7 @@ export function EditorView({
         showTimeline={showTimeline}
         onToggleTimeline={() => setShowTimeline((v) => !v)}
         previewMode={previewMode}
-        onTogglePreviewMode={() => setPreviewMode((v) => !v)}
+        onTogglePreviewMode={togglePreviewMode}
         playbackRate={playbackRate}
         onCyclePlaybackRate={cyclePlaybackRate}
         onExport={() => void handleExport()}
@@ -694,7 +706,7 @@ export function EditorView({
             title={isPlaying ? "Pause" : "Play"}
           />
         </div>
-        {!previewMode && showSidebar && (
+        {showSidebar && (
           <>
             <IconRail active={selectedSlice || selectedZoomKeyframe ? null : activeTool} onSelect={selectTool} />
             {selectedSlice ? (
@@ -770,7 +782,7 @@ export function EditorView({
         onPause={() => setIsPlaying(false)}
       />
 
-      {!previewMode && showTimeline && (
+      {showTimeline && (
         <div className="px-6 pb-6">
           <Timeline
             duration={duration}
