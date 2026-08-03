@@ -83,18 +83,18 @@ const IDLE_THRESHOLD_PX = 3;
 /** A "sensitive" mask's blur strength — how much smaller than its own
  * on-screen size the intermediate scratch canvas `drawBlurredRegion`
  * downscales to before stretching back up. Deliberately *not*
- * `ctx.filter = blur(...)`: that's reliable for a drawn shape (the cursor
- * glyph) or an `<img>`-sourced fill (the background blur), but WebKit
- * doesn't consistently apply a canvas filter to a `drawImage` whose
- * *source* is a live `<video>` element specifically — video frames are
- * often composited through a separate, hardware-accelerated path that
- * filter operations don't reliably hook into, and that mismatch is
- * exactly what made this render as an unblurred, fully-legible box
- * instead of a redacted one. Downscale-then-upscale only relies on
- * ordinary `drawImage` scaling (universally supported, video source or
- * not) — smaller than this fraction of the box's own size = blurrier
- * (and less legible) the result; tuned low enough that text becomes
- * illegible, not just softened. */
+ * `ctx.filter = blur(...)`: WebKit ignores a canvas filter on `drawImage`
+ * calls entirely — whether the source is a live `<video>`, an `<img>`, or
+ * another canvas (verified on this app's WKWebView: a blurred `drawImage`
+ * composite is pixel-identical to an unblurred one; filters only land on
+ * primitive draws like `fill`/`stroke`, which is why the cursor glyph's
+ * blur still works). That silent no-op is exactly what made this render as
+ * an unblurred, fully-legible box instead of a redacted one — and it's the
+ * same reason the background blur broke (see `getBackgroundLayer`).
+ * Downscale-then-upscale only relies on ordinary `drawImage` scaling
+ * (universally supported, video source or not) — smaller than this
+ * fraction of the box's own size = blurrier (and less legible) the result;
+ * tuned low enough that text becomes illegible, not just softened. */
 const MASK_BLUR_DOWNSCALE_FRACTION = 0.06;
 /** A mask's own corner radius (fraction of its smaller on-screen
  * dimension) while it's just sitting there being played back normally —
@@ -768,19 +768,48 @@ export class SceneRenderer {
     if (lctx) {
       lctx.clearRect(0, 0, canvasWidth, canvasHeight);
       if (style.backgroundBlur > 0) {
-        // `ctx.filter` only applies to subsequent draws, not retroactively
-        // — paint the unblurred fill into a scratch canvas first, then
-        // composite it back through a filtered drawImage.
+        // Not `ctx.filter = blur(...)` + a full-size `drawImage` of the
+        // unblurred fill — this WKWebView (like the clip-region `drawImage`
+        // cases the motion-blur comment at the top of this file already
+        // warns about) silently ignores a canvas filter on `drawImage`
+        // calls: filters only land on primitive draws (fill/stroke). That
+        // exact `filter`+`drawImage` composite is what this originally did
+        // and it rendered no blur at all. So the blur runs in software
+        // (`boxBlurGaussian`, three passes ≈ a Gaussian) on a *downscaled*
+        // scratch canvas, then is drawn back up to full size — plain,
+        // universally-supported `drawImage` scaling. Downscaling keeps the
+        // blur interactive on slider drags; the blurred fill has no detail
+        // finer than the box radius to lose, and the blur at reduced scale
+        // means the bilinear upscale spreads smooth content rather than
+        // enlarging pixels into blocks. Two tiers keep the radius in
+        // reduced-res pixels at ~radius/2 (i.e. matching the CSS
+        // `blur(radius)` the slider means): subtle blurs run at 1/4 scale
+        // (fine enough to stay light), stronger ones at 1/8 (their detail
+        // is already gone, and 8x upscaling is where blockiness would show
+        // — the box blur prevents it). A blurred region's pixel-blocks
+        // stay ≤ ~2 output px; the old pure-downscale approach made
+        // ~blur-px-sized flat blocks, which is the "blocky" look this
+        // replaces.
+        const scale = style.backgroundBlur < 12 ? 0.25 : 0.125;
+        const smallW = Math.max(1, Math.round(canvasWidth * scale));
+        const smallH = Math.max(1, Math.round(canvasHeight * scale));
         const source = this.backgroundBlurSource ?? document.createElement("canvas");
-        source.width = canvasWidth;
-        source.height = canvasHeight;
+        source.width = smallW;
+        source.height = smallH;
         const sctx = source.getContext("2d");
-        if (sctx) this.paintBackgroundFill(sctx, style, canvasWidth, canvasHeight);
+        if (sctx) {
+          sctx.imageSmoothingEnabled = true;
+          sctx.imageSmoothingQuality = "high";
+          this.paintBackgroundFill(sctx, style, smallW, smallH);
+          const imageData = sctx.getImageData(0, 0, smallW, smallH);
+          boxBlurGaussian(imageData.data, smallW, smallH, Math.max(1, Math.round((style.backgroundBlur * scale) / 2)));
+          sctx.putImageData(imageData, 0, 0);
+        }
         this.backgroundBlurSource = source;
 
-        lctx.filter = `blur(${style.backgroundBlur}px)`;
-        lctx.drawImage(source, 0, 0);
-        lctx.filter = "none";
+        lctx.imageSmoothingEnabled = true;
+        lctx.imageSmoothingQuality = "high";
+        lctx.drawImage(source, 0, 0, smallW, smallH, 0, 0, canvasWidth, canvasHeight);
       } else {
         this.paintBackgroundFill(lctx, style, canvasWidth, canvasHeight);
       }
@@ -980,6 +1009,71 @@ function roundedRectSubpath(ctx: CanvasRenderingContext2D, rect: Rect, radius: n
 function roundedRectPath(ctx: CanvasRenderingContext2D, rect: Rect, radius: number): void {
   ctx.beginPath();
   roundedRectSubpath(ctx, rect, radius);
+}
+
+/** In-place blur of an RGBA pixel buffer (from `getImageData`), three
+ * separable box-blur passes to approximate a Gaussian — the stand-in for the
+ * canvas `filter` blur this WKWebView ignores on `drawImage` (see
+ * `getBackgroundLayer`'s comment). Radius is in buffer pixels; each pass is a
+ * sliding-window mean so cost is ~independent of radius. The scratch buffer
+ * is reused across passes, and the horizontal/vertical sweeps alternate
+ * between `buf` and `tmp` so a pass never samples its own output. */
+function boxBlurGaussian(buf: Uint8ClampedArray, width: number, height: number, radius: number): void {
+  const tmp = new Uint8ClampedArray(buf.length);
+  const invDiv = 1 / (radius * 2 + 1);
+  for (let pass = 0; pass < 3; pass++) {
+    for (let y = 0; y < height; y++) {
+      const row = y * width * 4;
+      let sr = 0, sg = 0, sb = 0, sa = 0;
+      for (let i = -radius; i <= radius; i++) {
+        const p = row + (i < 0 ? 0 : i >= width ? width - 1 : i) * 4;
+        sr += buf[p];
+        sg += buf[p + 1];
+        sb += buf[p + 2];
+        sa += buf[p + 3];
+      }
+      for (let x = 0; x < width; x++) {
+        const o = row + x * 4;
+        tmp[o] = sr * invDiv;
+        tmp[o + 1] = sg * invDiv;
+        tmp[o + 2] = sb * invDiv;
+        tmp[o + 3] = sa * invDiv;
+        const addX = x + radius + 1 < width ? x + radius + 1 : width - 1;
+        const subX = x - radius > 0 ? x - radius : 0;
+        const pa = row + addX * 4;
+        const pr = row + subX * 4;
+        sr += buf[pa] - buf[pr];
+        sg += buf[pa + 1] - buf[pr + 1];
+        sb += buf[pa + 2] - buf[pr + 2];
+        sa += buf[pa + 3] - buf[pr + 3];
+      }
+    }
+    for (let x = 0; x < width; x++) {
+      let sr = 0, sg = 0, sb = 0, sa = 0;
+      for (let i = -radius; i <= radius; i++) {
+        const p = (i < 0 ? 0 : i >= height ? height - 1 : i) * width * 4 + x * 4;
+        sr += tmp[p];
+        sg += tmp[p + 1];
+        sb += tmp[p + 2];
+        sa += tmp[p + 3];
+      }
+      for (let y = 0; y < height; y++) {
+        const o = y * width * 4 + x * 4;
+        buf[o] = sr * invDiv;
+        buf[o + 1] = sg * invDiv;
+        buf[o + 2] = sb * invDiv;
+        buf[o + 3] = sa * invDiv;
+        const addY = y + radius + 1 < height ? y + radius + 1 : height - 1;
+        const subY = y - radius > 0 ? y - radius : 0;
+        const pa = addY * width * 4 + x * 4;
+        const pr = subY * width * 4 + x * 4;
+        sr += tmp[pa] - tmp[pr];
+        sg += tmp[pa + 1] - tmp[pr + 1];
+        sb += tmp[pa + 2] - tmp[pr + 2];
+        sa += tmp[pa + 3] - tmp[pr + 3];
+      }
+    }
+  }
 }
 
 /** Fill/stroke treatment per `CursorSettings.style` — applied to the
