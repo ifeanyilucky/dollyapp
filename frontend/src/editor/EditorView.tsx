@@ -395,6 +395,49 @@ export function EditorView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUndo, canRedo, undoDoc, redoDoc, exporting, previewMode]);
 
+  // Fades `PreviewControls` in on mouse activity and back out after a
+  // few seconds of none — only while actually playing; paused, there's no
+  // "distraction" to clear away from a static frame, so it stays put (same
+  // convention most video players use for their own fullscreen controls).
+  // Scoped entirely to `previewMode` — no listener attached, no timer
+  // running, the rest of the time.
+  useEffect(() => {
+    if (!previewMode) return;
+
+    setPreviewControlsVisible(true);
+
+    function scheduleHide() {
+      if (previewHideTimerRef.current !== null) window.clearTimeout(previewHideTimerRef.current);
+      if (!isPlaying || hoveringPreviewControlsRef.current) return;
+      previewHideTimerRef.current = window.setTimeout(() => setPreviewControlsVisible(false), 2500);
+    }
+
+    function handleMouseMove() {
+      setPreviewControlsVisible(true);
+      scheduleHide();
+    }
+
+    scheduleHide();
+    window.addEventListener("mousemove", handleMouseMove);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      if (previewHideTimerRef.current !== null) window.clearTimeout(previewHideTimerRef.current);
+    };
+  }, [previewMode, isPlaying]);
+
+  function handlePreviewControlsPointerEnter() {
+    hoveringPreviewControlsRef.current = true;
+    if (previewHideTimerRef.current !== null) window.clearTimeout(previewHideTimerRef.current);
+    setPreviewControlsVisible(true);
+  }
+
+  function handlePreviewControlsPointerLeave() {
+    hoveringPreviewControlsRef.current = false;
+    if (isPlaying) {
+      previewHideTimerRef.current = window.setTimeout(() => setPreviewControlsVisible(false), 2500);
+    }
+  }
+
   function togglePlay() {
     const video = videoRef.current;
     if (!video) return;
@@ -630,7 +673,7 @@ export function EditorView({
   const selectedZoomKeyframe = selectedZoomIndex !== null ? zoomKeyframes[selectedZoomIndex] : undefined;
 
   return (
-    <div className="flex h-screen w-screen flex-col bg-neutral-950 text-neutral-300">
+    <div className="relative flex h-screen w-screen flex-col bg-neutral-950 text-neutral-300">
       <TopBar
         title={bundlePath.split("/").pop() ?? bundlePath}
         aspectRatioId={aspectRatioId}
@@ -715,6 +758,21 @@ export function EditorView({
           </>
         )}
       </div>
+
+      {previewMode && (
+        <PreviewControls
+          isPlaying={isPlaying}
+          currentTime={currentTime}
+          duration={duration}
+          clipStartS={clipStartS}
+          clipEndS={clipEndS}
+          onTogglePlay={togglePlay}
+          onSeek={handleSeek}
+          visible={previewControlsVisible}
+          onPointerEnter={handlePreviewControlsPointerEnter}
+          onPointerLeave={handlePreviewControlsPointerLeave}
+        />
+      )}
 
       {/* Hidden — used purely as a decoded-frame source for the canvas. */}
       <video
