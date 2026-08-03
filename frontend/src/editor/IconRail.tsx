@@ -1,6 +1,6 @@
 import { Command, Frame, MessageSquare, MousePointer2, Orbit, SquareUser, Volume2 } from "lucide-react";
 
-const WIRED_TOOLS = new Set<ToolId>(["style", "cursor", "animations"]);
+const WIRED_TOOLS = new Set<ToolId>(["style", "cursor", "audio", "animations"]);
 
 export const TOOLS = [
   { id: "style", icon: Frame, label: "Background & Screen" },
@@ -18,10 +18,10 @@ export type ToolId = (typeof TOOLS)[number]["id"];
  * Narrow tool rail — sits between the canvas and whichever settings panel
  * is active (see `EditorView`). Controlled from the parent (not local
  * state) since the selected tool decides *which panel renders*, not just
- * which icon is highlighted. Only "style", "cursor", and "animations" do
- * anything — clicking one of the rest is a no-op (they don't call
- * `onSelect`, so `active`/the rendered panel don't change) since there's no
- * panel behind them yet (webcam overlay, comments, audio mixing, shortcut
+ * which icon is highlighted. Only "style", "cursor", "audio", and
+ * "animations" do anything — clicking one of the rest is a no-op (they
+ * don't call `onSelect`, so `active`/the rendered panel don't change) since
+ * there's no panel behind them yet (webcam overlay, comments, shortcut
  * config).
  *
  * `active` is `null` while a timeline slice/zoom-keyframe editor is

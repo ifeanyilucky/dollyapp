@@ -5,6 +5,8 @@ import { generateZoomKeyframes, splitKeyframeAt, type ZoomKeyframe } from "../mo
 import { AnimationPanel } from "./AnimationPanel";
 import { aspectRatioPreset } from "./aspect";
 import { deleteRecording, loadRecording, revealInFinder, type LoadedRecording } from "./api";
+import { AudioPanel } from "./AudioPanel";
+import { BackgroundAudioPlayer, decodeCustomAudioTrack, getAmbientBuffer, isAmbientTrackId } from "./backgroundAudio";
 import { playClickSound } from "./clickSound";
 import { CropFooter, CropOverlay, CropToolbar } from "./CropEditor";
 import { clampCropRect, fullFrameCrop, isFullFrameCrop, type CropRect } from "./crop";
@@ -141,6 +143,7 @@ export function EditorView({
     cursorSettings,
     masks,
     animationSettings,
+    audioSettings,
   } = doc;
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -168,6 +171,11 @@ export function EditorView({
   cursorSettingsRef.current = cursorSettings;
   const animationSettingsRef = useRef(animationSettings);
   animationSettingsRef.current = animationSettings;
+  // Read once, at mount, by the background-audio-player-creation effect
+  // below — not a per-frame `tick` dependency the way the other refs here
+  // are, but the same "read latest without retriggering an effect" need.
+  const audioSettingsRef = useRef(audioSettings);
+  audioSettingsRef.current = audioSettings;
   // Read from `tick` (see the render-loop effect, keyed only on `loaded`)
   // without becoming a dependency of it — same pattern as the refs above,
   // but this one changes on every mouse-move over the timeline, so it
@@ -184,6 +192,11 @@ export function EditorView({
   // from `tick`'s own `tUs` each frame and reset on seek, so a scrub never
   // replays every click between the old and new position at once.
   const lastSoundCheckTUsRef = useRef(0);
+  // The Audio panel's background track player — created once (see the
+  // mount effect below), reused across every track/volume/mute change and
+  // every play/pause. Lives alongside `audioCtxRef` rather than replacing
+  // its own click-sound usage; both share the same `AudioContext`.
+  const bgAudioPlayerRef = useRef<BackgroundAudioPlayer | null>(null);
   // Drive `PreviewControls`' fade — see the mouse-activity effect below.
   const previewHideTimerRef = useRef<number | null>(null);
   const hoveringPreviewControlsRef = useRef(false);
@@ -345,6 +358,69 @@ export function EditorView({
       void audioCtxRef.current?.close();
     };
   }, []);
+
+  // Creates the Audio panel's background track player once, up front —
+  // unlike the click-sound `AudioContext` above, this one isn't deferred
+  // until first use: selecting a track while paused should already have it
+  // ready to play the instant playback starts, not decode on the first
+  // `isPlaying` flip. Constructing an `AudioContext` itself needs no user
+  // gesture (only actually producing sound does, which `play()` already
+  // gates on `ctx.state`), so this is safe at mount.
+  useEffect(() => {
+    if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+    const player = new BackgroundAudioPlayer(audioCtxRef.current, audioCtxRef.current.destination);
+    player.setVolume(audioSettingsRef.current.volume, audioSettingsRef.current.muted);
+    bgAudioPlayerRef.current = player;
+    return () => {
+      player.dispose();
+      bgAudioPlayerRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Resolves whichever track `audioSettings.trackId` points at (a built-in
+  // ambient preset, or the user's uploaded file) into a real `AudioBuffer`
+  // and hands it to the player — `BackgroundAudioPlayer.setBuffer` swaps
+  // the loop source live, including mid-playback, without touching play
+  // state. `null` (no track/"Remove background audio") just silences it.
+  useEffect(() => {
+    const player = bgAudioPlayerRef.current;
+    const ctx = audioCtxRef.current;
+    if (!player || !ctx) return;
+    let cancelled = false;
+    async function resolveTrack() {
+      if (!audioSettings.trackId) {
+        player!.setBuffer(null);
+        return;
+      }
+      const buffer = isAmbientTrackId(audioSettings.trackId)
+        ? await getAmbientBuffer(audioSettings.trackId)
+        : audioSettings.customAudioUrl
+          ? await decodeCustomAudioTrack(ctx!, audioSettings.customAudioUrl)
+          : null;
+      if (!cancelled) player!.setBuffer(buffer);
+    }
+    void resolveTrack();
+    return () => {
+      cancelled = true;
+    };
+  }, [audioSettings.trackId, audioSettings.customAudioUrl]);
+
+  // Volume/mute are plain gain-node values — no async resolution needed,
+  // unlike the track itself above.
+  useEffect(() => {
+    bgAudioPlayerRef.current?.setVolume(audioSettings.volume, audioSettings.muted);
+  }, [audioSettings.volume, audioSettings.muted]);
+
+  // Background audio mirrors the main video's own play state, exactly like
+  // a real embedded audio track would — it doesn't need to track seeks/
+  // scrubs/removed-slice jumps the way the video and cursor do, since it's
+  // a decorative ambient loop rather than something synced to specific
+  // recorded moments.
+  useEffect(() => {
+    if (isPlaying) bgAudioPlayerRef.current?.play();
+    else bgAudioPlayerRef.current?.pause();
+  }, [isPlaying]);
 
   // Render loop: reads `video.currentTime` directly every animation
   // frame rather than relying on the `timeupdate` event, which fires far
@@ -720,6 +796,7 @@ export function EditorView({
         showCursor,
         cursorSettings,
         animationSettings,
+        audioSettings,
         aspectRatioId,
         resolution,
         crop,
@@ -1164,6 +1241,12 @@ export function EditorView({
                 onCommit={commitDoc}
                 showCursor={showCursor}
                 onToggleShowCursor={() => setDoc((d) => ({ ...d, showCursor: !d.showCursor }))}
+              />
+            ) : activeTool === "audio" ? (
+              <AudioPanel
+                settings={audioSettings}
+                onChange={(next) => setDocTransient((d) => ({ ...d, audioSettings: next }))}
+                onCommit={commitDoc}
               />
             ) : activeTool === "animations" ? (
               <AnimationPanel

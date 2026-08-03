@@ -1,5 +1,6 @@
 import type { ZoomKeyframe } from "../motion-engine";
 import { DEFAULT_ANIMATION_SETTINGS, type AnimationSettings } from "./animationSettings";
+import { DEFAULT_AUDIO_SETTINGS, type AudioSettings } from "./audioSettings";
 import type { AspectRatioId } from "./aspect";
 import type { CropRect } from "./crop";
 import { DEFAULT_CURSOR_SETTINGS, type CursorSettings } from "./cursorSettings";
@@ -39,6 +40,7 @@ export interface EditorDocument {
    * `masks.ts`'s module doc comment for how these differ from `slices`. */
   masks: MaskClip[];
   animationSettings: AnimationSettings;
+  audioSettings: AudioSettings;
 }
 
 export const DEFAULT_DOCUMENT: EditorDocument = {
@@ -54,4 +56,5 @@ export const DEFAULT_DOCUMENT: EditorDocument = {
   cursorSettings: DEFAULT_CURSOR_SETTINGS,
   masks: [],
   animationSettings: DEFAULT_ANIMATION_SETTINGS,
+  audioSettings: DEFAULT_AUDIO_SETTINGS,
 };
