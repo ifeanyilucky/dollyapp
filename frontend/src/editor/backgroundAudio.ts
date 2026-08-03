@@ -235,10 +235,11 @@ export function getAmbientBuffer(id: AmbientTrackId): Promise<AudioBuffer> {
 
 /** Fetches and decodes any fetchable audio URL into a real `AudioBuffer` —
  * a user-uploaded custom track's `blob:` URL (`AudioPanel`'s upload
- * handler), or a `convertFileSrc`'d filesystem path (mic narration's
- * `mic.wav` — see `narration.ts`). Returns `null` on any failure (corrupt
- * file, unsupported codec, missing file) rather than throwing, so a bad
- * track just silently plays nothing instead of breaking playback/export. */
+ * handler), a `dol://` media URL (packed recordings' mic narration — see
+ * `narration.ts`), or a `convertFileSrc`'d filesystem path (legacy
+ * `.motionrec` bundles). Returns `null` on any failure (corrupt file,
+ * unsupported codec, missing file) rather than throwing, so a bad track
+ * just silently plays nothing instead of breaking playback/export. */
 export async function decodeAudioFromUrl(ctx: BaseAudioContext, url: string): Promise<AudioBuffer | null> {
   try {
     const resp = await fetch(url);
