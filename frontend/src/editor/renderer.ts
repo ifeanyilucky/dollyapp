@@ -18,7 +18,7 @@ const CLICK_RIPPLE_DURATION_US = 500_000;
  * (ARCHITECTURE.md, "Cursor rendering"). Big and readable, per the intent
  * of a screen-recording tool whose entire pitch is legibility. This is
  * the *base* size before `CursorSettings.size`'s multiplier is applied. */
-const CURSOR_SIZE_PX = 46;
+const CURSOR_SIZE_PX = 92;
 
 // Motion blur — both the content (during a zoom/pan transition) and the
 // cursor glyph (during a fast move) get a `ctx.filter = blur(...)` pass
@@ -33,16 +33,16 @@ const CURSOR_SIZE_PX = 46;
 // direction), and maps that velocity to a blur radius. Tuned by eye, not
 // derived from anything physical — adjust the `*_SENSITIVITY` constants if
 // the effect ever reads as too subtle or too smeary.
-const MAX_CONTENT_BLUR_PX = 8;
-const CONTENT_BLUR_SENSITIVITY = 3000;
-const MAX_CURSOR_BLUR_PX = 8;
-const CURSOR_BLUR_SENSITIVITY = 3;
+const MAX_CONTENT_BLUR_PX = 16;
+const CONTENT_BLUR_SENSITIVITY = 5000;
+const MAX_CURSOR_BLUR_PX = 14;
+const CURSOR_BLUR_SENSITIVITY = 5.5;
 /** Cursor opacity fades alongside the blur during a fast move ("faded
  * movement" — a plain blur alone still reads as sharp-but-smeared; a
  * slight fade sells the "moving too fast to fully see it" feel) — floors
  * here rather than fading to fully invisible. */
-const MIN_CURSOR_ALPHA = 0.4;
-const CURSOR_FADE_SENSITIVITY = 0.22;
+const MIN_CURSOR_ALPHA = 0.3;
+const CURSOR_FADE_SENSITIVITY = 0.32;
 /** `CursorSettings.loopCursorPosition`'s blend window, capped to 30% of
  * the clip for anything shorter than this. */
 const LOOP_BLEND_DURATION_US = 1_200_000;
