@@ -24,6 +24,19 @@ export const DEFAULT_ONE_EURO_PARAMS: OneEuroFilterParams = {
   dCutoff: 1.0,
 };
 
+/** The Animations panel's "Cursor animation style" — how much the recorded
+ * cursor path gets smoothed before it's drawn. "none" isn't a filter preset
+ * (it skips the One Euro filter entirely and draws the raw recorded path —
+ * see `SceneRenderer`'s `cursorAnimationStyle` handling), so it has no entry
+ * here. */
+export type CursorAnimationStyle = "smooth" | "medium" | "rapid" | "none";
+
+export const CURSOR_ANIMATION_PRESETS: Record<Exclude<CursorAnimationStyle, "none">, OneEuroFilterParams> = {
+  smooth: DEFAULT_ONE_EURO_PARAMS,
+  medium: { minCutoff: 1.8, beta: 0.02, dCutoff: 1.0 },
+  rapid: { minCutoff: 4, beta: 0.05, dCutoff: 1.0 },
+};
+
 function lowPassAlpha(cutoff: number, dt: number): number {
   const tau = 1 / (2 * Math.PI * cutoff);
   return 1 / (1 + tau / dt);

@@ -34,6 +34,18 @@ export const ZOOM_LEVEL_SPRING = criticallyDamped(40);
  * inside the cropped viewport instead of trailing it off-frame. */
 export const PAN_SPRING = criticallyDamped(90);
 
+/** The Animations panel's "Screen animation style" — picks which pan/zoom
+ * spring stiffness `MotionEngine` steps with (see its `setScreenAnimationStyle`).
+ * `focused` is exactly today's tuned defaults above (quick to stabilize, easy
+ * to follow); `smooth` is deliberately looser on both, for a slower, more
+ * cinematic drift instead of snapping to a stop. */
+export type ScreenAnimationStyle = "focused" | "smooth";
+
+export const SCREEN_ANIMATION_SPRINGS: Record<ScreenAnimationStyle, { pan: SpringParams; zoomLevel: SpringParams }> = {
+  focused: { pan: PAN_SPRING, zoomLevel: ZOOM_LEVEL_SPRING },
+  smooth: { pan: criticallyDamped(42), zoomLevel: criticallyDamped(18) },
+};
+
 export interface SpringState {
   value: number;
   velocity: number;

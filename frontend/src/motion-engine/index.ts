@@ -10,7 +10,7 @@ export * from "./autoZoom";
 
 import type { CursorSample, CursorTrack } from "../bundle/types";
 import { DEFAULT_ONE_EURO_PARAMS, OneEuroFilter2D, type OneEuroFilterParams } from "./oneEuroFilter";
-import { PAN_SPRING, stepSpring, ZOOM_LEVEL_SPRING, type SpringState } from "./spring";
+import { SCREEN_ANIMATION_SPRINGS, stepSpring, type ScreenAnimationStyle, type SpringParams, type SpringState } from "./spring";
 import {
   generateZoomKeyframes,
   viewportForKeyframe,
@@ -60,14 +60,38 @@ export class MotionEngine {
    * `viewportForKeyframe`'s doc comment. `undefined` keeps the source
    * frame's own aspect (the pre-aspect-ratio-switcher default). */
   private outputAspect: number | undefined;
+  /** Current pan/zoom-level spring stiffness — swapped by
+   * `setScreenAnimationStyle` (the Animations panel's "Screen animation
+   * style"), not baked in as module constants, so it can change live
+   * without resetting playback. */
+  private panSpring: SpringParams;
+  private zoomSpring: SpringParams;
 
-  constructor(frame: FrameSize, keyframes: ZoomKeyframe[], outputAspect?: number) {
+  constructor(
+    frame: FrameSize,
+    keyframes: ZoomKeyframe[],
+    outputAspect?: number,
+    screenAnimationStyle: ScreenAnimationStyle = "focused",
+  ) {
     this.frame = frame;
     this.keyframes = keyframes;
     this.outputAspect = outputAspect;
+    const springs = SCREEN_ANIMATION_SPRINGS[screenAnimationStyle];
+    this.panSpring = springs.pan;
+    this.zoomSpring = springs.zoomLevel;
     this.levelSpring = { value: 1, velocity: 0 };
     this.centerXSpring = { value: frame.width / 2, velocity: 0 };
     this.centerYSpring = { value: frame.height / 2, velocity: 0 };
+  }
+
+  /** Called live when the user switches "Screen animation style" in the
+   * Animations panel — reshapes how the *next* `transformAt` steps existing
+   * spring state toward its target, without resetting position/velocity
+   * (so the change blends in rather than jump-cutting). */
+  setScreenAnimationStyle(style: ScreenAnimationStyle): void {
+    const springs = SCREEN_ANIMATION_SPRINGS[style];
+    this.panSpring = springs.pan;
+    this.zoomSpring = springs.zoomLevel;
   }
 
   /** Called live when the user switches the output aspect ratio — no
@@ -162,9 +186,9 @@ export class MotionEngine {
       let remaining = totalDt;
       while (remaining > 0) {
         const step = Math.min(remaining, MAX_SPRING_STEP_SECONDS);
-        this.levelSpring = stepSpring(this.levelSpring, target.level, step, ZOOM_LEVEL_SPRING);
-        this.centerXSpring = stepSpring(this.centerXSpring, target.center.x, step, PAN_SPRING);
-        this.centerYSpring = stepSpring(this.centerYSpring, target.center.y, step, PAN_SPRING);
+        this.levelSpring = stepSpring(this.levelSpring, target.level, step, this.zoomSpring);
+        this.centerXSpring = stepSpring(this.centerXSpring, target.center.x, step, this.panSpring);
+        this.centerYSpring = stepSpring(this.centerYSpring, target.center.y, step, this.panSpring);
         remaining -= step;
       }
     }
@@ -190,7 +214,8 @@ export function createMotionEngine(
   frame: FrameSize,
   sensitivity?: AutoZoomSensitivity,
   outputAspect?: number,
+  screenAnimationStyle?: ScreenAnimationStyle,
 ): MotionEngine {
   const keyframes = generateZoomKeyframes(track, sensitivity);
-  return new MotionEngine(frame, keyframes, outputAspect);
+  return new MotionEngine(frame, keyframes, outputAspect, screenAnimationStyle);
 }
