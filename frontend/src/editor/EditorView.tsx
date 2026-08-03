@@ -550,9 +550,11 @@ export function EditorView({
    * its own state (see their declaration), so entering/exiting it just
    * means flipping both at once. */
   function togglePreviewMode() {
-    const next = !previewMode;
-    setShowSidebar(next);
-    setShowTimeline(next);
+    // Currently in preview mode (both hidden) -> show both again; not in
+    // preview mode (at least one visible) -> hide both. That's `previewMode`
+    // itself as the target visibility, not its negation.
+    setShowSidebar(previewMode);
+    setShowTimeline(previewMode);
   }
 
   function updateSlice(next: ClipSlice) {

@@ -124,7 +124,7 @@ export function StylePanel({
             Pick random wallpaper
           </button>
 
-          <div className="grid grid-cols-8 gap-2.5">
+          <div className="grid grid-cols-8 gap-1.5">
             {WALLPAPER_IMAGES.map((w) => (
               <button
                 key={w.id}
