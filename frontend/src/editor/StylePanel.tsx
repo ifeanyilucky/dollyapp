@@ -323,11 +323,49 @@ export function StylePanel({
           label="Inset"
           value={style.inset}
           min={0}
-          max={12}
+          max={40}
           onChange={(v) => setLive("inset", v)}
           onCommit={onCommit}
           onReset={() => set("inset", DEFAULT_STYLE.inset)}
         />
+        {style.inset > 0 && (
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-neutral-300">Inset color</span>
+              <input
+                type="color"
+                value={style.insetColor}
+                // Same as the background color picker: native pickers fire
+                // `onChange` continuously while dragging inside the OS UI,
+                // so update live and commit once the picker loses focus.
+                onChange={(e) => setLive("insetColor", e.target.value)}
+                onBlur={onCommit}
+                className="h-7 w-7 cursor-pointer rounded-full border border-neutral-700 bg-transparent"
+                aria-label="Inset color"
+              />
+            </div>
+            <Slider
+              label="Opacity"
+              value={style.insetOpacity}
+              min={0}
+              max={1}
+              step={0.01}
+              onChange={(v) => setLive("insetOpacity", v)}
+              onCommit={onCommit}
+              onReset={() => set("insetOpacity", DEFAULT_STYLE.insetOpacity)}
+            />
+            <Slider
+              label="Balance"
+              value={style.insetBalance}
+              min={0}
+              max={1}
+              step={0.01}
+              onChange={(v) => setLive("insetBalance", v)}
+              onCommit={onCommit}
+              onReset={() => set("insetBalance", DEFAULT_STYLE.insetBalance)}
+            />
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col gap-4 border-t border-neutral-800 pt-4">

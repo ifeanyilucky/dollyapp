@@ -31,9 +31,17 @@ export interface StyleSettings {
   shadowColor: string;
   /** Width (canvas px) of a subtle light border inset from the video's
    * own edge — a glass-bezel look, distinct from the drop shadow cast
-   * outside the video. 0 disables it. */
+   * outside the video. 0 disables it (and the inset controls below are
+   * hidden in the panel). */
   inset: number;
+  /** Bezel border color, hex — the alpha is `insetOpacity`, so it stays a
+   * plain pickable color instead of a stored rgba() string. */
   insetColor: string;
+  /** Overall opacity of the bezel border, 0..1. */
+  insetOpacity: number;
+  /** Vertical light balance of the bezel, 0..1: 1 lights it from above
+   * (bright top edge receding to a dim bottom), 0 from below, 0.5 even. */
+  insetBalance: number;
 }
 
 export const DEFAULT_STYLE: StyleSettings = {
@@ -49,5 +57,7 @@ export const DEFAULT_STYLE: StyleSettings = {
   shadowOffsetY: 24,
   shadowColor: "rgba(0,0,0,0.5)",
   inset: 0,
-  insetColor: "rgba(255,255,255,0.5)",
+  insetColor: "#ffffff",
+  insetOpacity: 0.5,
+  insetBalance: 0.5,
 };

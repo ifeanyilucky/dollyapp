@@ -492,7 +492,17 @@ export class SceneRenderer {
       };
       ctx.save();
       roundedRectPath(ctx, insetRect, Math.max(0, style.cornerRadius - style.inset / 2));
-      ctx.strokeStyle = style.insetColor;
+      // Glass-bezel light: a vertical gradient across the stroke so the top
+      // edge catches the light and the bottom recedes, with `insetBalance`
+      // (0 = light from below, 1 = from above, 0.5 = even) and
+      // `insetOpacity` shaping the two ends. `insetColor` is a plain hex
+      // (the panel's color picker only yields hex), so the alpha is applied
+      // here when building the rgba() gradient.
+      const [r, g, b] = hexToRgb(style.insetColor);
+      const gradient = ctx.createLinearGradient(0, insetRect.y, 0, insetRect.y + insetRect.height);
+      gradient.addColorStop(0, `rgba(${r},${g},${b},${style.insetOpacity * (0.5 + 0.5 * style.insetBalance)})`);
+      gradient.addColorStop(1, `rgba(${r},${g},${b},${style.insetOpacity * (1 - 0.5 * style.insetBalance)})`);
+      ctx.strokeStyle = gradient;
       ctx.lineWidth = style.inset;
       ctx.stroke();
       ctx.restore();
@@ -1009,6 +1019,14 @@ function roundedRectSubpath(ctx: CanvasRenderingContext2D, rect: Rect, radius: n
 function roundedRectPath(ctx: CanvasRenderingContext2D, rect: Rect, radius: number): void {
   ctx.beginPath();
   roundedRectSubpath(ctx, rect, radius);
+}
+
+/** `#rrggbb` (the only form a native color input produces) → `[r, g, b]`;
+ * falls back to white for anything else so the callers (currently the
+ * inset bezel gradient) never interpolate a NaN into a canvas color. */
+function hexToRgb(hex: string): [number, number, number] {
+  const n = parseInt(hex.replace("#", ""), 16);
+  return Number.isNaN(n) ? [255, 255, 255] : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
 /** In-place blur of an RGBA pixel buffer (from `getImageData`), three
