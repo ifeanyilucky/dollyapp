@@ -23,6 +23,17 @@ function clampS(v: number, lo: number, hi: number): number {
   return Math.min(Math.max(v, lo), hi);
 }
 
+/** The zoom and mask tracks are "accordion" rows: compact by default (a
+ * slim overview strip) and only grow to their full, comfortably-editable
+ * height while actually being worked on (hovered, or holding the current
+ * selection) — see `zoomFocused`/`maskFocused` below. Whichever one isn't
+ * currently focused compacts to make room, so at most one of the two is
+ * ever expanded at a time. The slice/clip track is deliberately not part
+ * of this — it's the primary track and always stays at its own fixed
+ * height. */
+const TRACK_HEIGHT_COMPACT_PX = 14;
+const TRACK_HEIGHT_NORMAL_PX = 36;
+
 const MIN_DRAG_SECONDS = 0.15;
 /** A pointer that moved less than this (px) between down and up counts as
  * a click/select rather than a drag — lets the zoom track's move-handle
@@ -56,9 +67,11 @@ export function Timeline({
   onSelectSlice,
   onSplitZoomKeyframe,
   onSelectZoomKeyframe,
+  zoomSelected,
   masks,
   onChangeMasks,
   onSelectMask,
+  maskSelected,
   resolution,
   onChangeResolution,
   sourceWidthPx,
@@ -100,12 +113,20 @@ export function Timeline({
   onSelectSlice: (id: string) => void;
   onSplitZoomKeyframe: (index: number, atT: number) => void;
   onSelectZoomKeyframe: (index: number) => void;
+  /** Whether *any* zoom keyframe is currently selected (`ZoomEditorPanel`
+   * showing) — keeps the zoom track expanded to its normal height even
+   * after the mouse moves away, same idea as `maskSelected`. See the
+   * `TRACK_HEIGHT_*` doc comment. */
+  zoomSelected: boolean;
   masks: MaskClip[];
   /** Live update, called continuously while dragging a mask clip (move or
    * trim) — pairs with `onCommitChange` below, same as
    * `onChangeZoomKeyframes`. */
   onChangeMasks: (masks: MaskClip[]) => void;
   onSelectMask: (id: string) => void;
+  /** Whether any mask is currently selected (`MaskEditorPanel` showing) —
+   * see `zoomSelected`. */
+  maskSelected: boolean;
   /** Output resolution — see `ResolutionPicker`'s doc comment for why this
    * lives next to the split/scissors button and also drives `exportVideo`,
    * not just the preview. */
@@ -119,7 +140,24 @@ export function Timeline({
   const [splitArmed, setSplitArmed] = useState(false);
   const [hoverS, setHoverS] = useState<number | null>(null);
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null);
+  // Which of the two "accordion" tracks the mouse is currently over — see
+  // the `TRACK_HEIGHT_*` doc comment. Mid-drag, the track actually being
+  // dragged always wins regardless of hover (a drag that briefly strays a
+  // pixel outside the row's own bounds shouldn't cause it to collapse out
+  // from under the pointer).
+  const [hoveredTrack, setHoveredTrack] = useState<"zoom" | "mask" | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
+
+  const zoomDragging = activeDrag?.kind.startsWith("zoom") ?? false;
+  const maskDragging = activeDrag?.kind.startsWith("mask") ?? false;
+  // Hover takes priority (it's the more immediate "what am I about to touch
+  // right now" signal); once the mouse isn't over either track, falls back
+  // to reflecting the current selection, so a selected zoom/mask keyframe's
+  // track stays expanded — and the other one stays out of its way — for as
+  // long as its editor panel is open, not just while the mouse happens to
+  // be resting on it.
+  const zoomFocused = zoomDragging || (!maskDragging && (hoveredTrack === "zoom" || (hoveredTrack !== "mask" && zoomSelected)));
+  const maskFocused = maskDragging || (!zoomDragging && (hoveredTrack === "mask" || (hoveredTrack !== "zoom" && maskSelected)));
 
   const safeDuration = duration > 0 ? duration : 1;
   const tickInterval = pickTickInterval(safeDuration);
@@ -470,7 +508,10 @@ export function Timeline({
         </div>
 
         <div
-          className={`relative mt-1.5 h-9 rounded-md bg-neutral-800/60 ${splitArmed ? "cursor-crosshair" : ""}`}
+          className={`relative mt-1.5 rounded-md bg-neutral-800/60 transition-[height] duration-150 ease-out ${splitArmed ? "cursor-crosshair" : ""}`}
+          style={{ height: zoomFocused ? TRACK_HEIGHT_NORMAL_PX : TRACK_HEIGHT_COMPACT_PX }}
+          onMouseEnter={() => setHoveredTrack("zoom")}
+          onMouseLeave={() => setHoveredTrack((t) => (t === "zoom" ? null : t))}
         >
           {zoomKeyframes.map((kf, index) => {
             const startS = (kf.startT - videoStartUs) / 1e6;
@@ -495,7 +536,7 @@ export function Timeline({
                 onPointerDown={(e) => handleZoomMove(e, kf, index)}
                 onClick={(e) => handleZoomClick(e, index)}
               >
-                {widthPct > 6 ? `${kf.level.toFixed(1)}x` : ""}
+                {zoomFocused && widthPct > 6 ? `${kf.level.toFixed(1)}x` : ""}
                 <div
                   onPointerDown={(e) => handleZoomTrim(e, kf, index, "left")}
                   onClick={(e) => e.stopPropagation()}
@@ -528,7 +569,12 @@ export function Timeline({
          * a glance: amber (slices), indigo (zoom), rose/amber (masks,
          * matching the sensitive/highlight colors `MaskEditorPanel` and
          * the renderer's mask fill both use). */}
-        <div className="relative mt-1.5 h-9 rounded-md bg-neutral-800/60">
+        <div
+          className="relative mt-1.5 rounded-md bg-neutral-800/60 transition-[height] duration-150 ease-out"
+          style={{ height: maskFocused ? TRACK_HEIGHT_NORMAL_PX : TRACK_HEIGHT_COMPACT_PX }}
+          onMouseEnter={() => setHoveredTrack("mask")}
+          onMouseLeave={() => setHoveredTrack((t) => (t === "mask" ? null : t))}
+        >
           {masks.map((mask) => {
             const leftPct = clampPct((mask.startS / safeDuration) * 100);
             const widthPct = clampPct(((mask.endS - mask.startS) / safeDuration) * 100);
@@ -548,7 +594,7 @@ export function Timeline({
                 title={`${mask.type === "sensitive" ? "Sensitive data mask" : "Highlight mask"} ${formatTime(mask.startS)}–${formatTime(mask.endS)}${mask.disabled ? " (disabled)" : ""}`}
                 onPointerDown={(e) => handleMaskMove(e, mask)}
               >
-                {widthPct > 8 ? (mask.type === "sensitive" ? "Sensitive" : "Highlight") : ""}
+                {maskFocused && widthPct > 8 ? (mask.type === "sensitive" ? "Sensitive" : "Highlight") : ""}
                 <div
                   onPointerDown={(e) => handleMaskTrim(e, mask, "left")}
                   onClick={(e) => e.stopPropagation()}

@@ -1044,9 +1044,11 @@ export function EditorView({
             onSelectSlice={selectSlice}
             onSplitZoomKeyframe={handleSplitZoom}
             onSelectZoomKeyframe={selectZoomKeyframe}
+            zoomSelected={selectedZoomIndex !== null}
             masks={masks}
             onChangeMasks={updateAllMasksLive}
             onSelectMask={selectMask}
+            maskSelected={selectedMaskId !== null}
             resolution={resolution}
             onChangeResolution={changeResolution}
             sourceWidthPx={loaded.meta.display.widthPx}
