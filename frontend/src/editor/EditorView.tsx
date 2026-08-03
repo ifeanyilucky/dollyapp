@@ -398,14 +398,25 @@ export function EditorView({
         }
         lastSoundCheckTUsRef.current = tUs;
 
-        // `forceFullFrame`: crop mode wants to show the entire selectable
-        // area (see `CropOverlay`), not whatever a zoom keyframe currently
-        // has things reframed to — and editing a mask's box wants exactly
-        // the same stable, unzoomed view for the same reason (see
-        // `selectedMaskIdRef`'s doc comment). Any *confirmed* crop is
-        // already baked into `renderer` itself (its effective frame — see
-        // `effectiveCrop`/the renderer-construction effect above), so
-        // nothing else here needs to know about it.
+        // `maskEditingActive`: the selected mask's box (`MaskOverlay`) is
+        // actually showing right now — selected *and* currently in its own
+        // `[startS, endS)` range (see `maskPreviewActiveRef`'s doc comment;
+        // this is `EditorView`'s fix for the box/effect not respecting the
+        // mask's own time range). While it is, `forceFullFrame` holds the
+        // same full, unzoomed frame crop mode does — so the box can be
+        // positioned against a stable view instead of fighting an in-
+        // progress zoom/pan — same as `cropModeRef`, below.
+        const maskEditingActive = maskPreviewActiveRef.current;
+        // Only while a handle on that box is actually being *held down*
+        // (`maskDraggingRef`, set by `MaskOverlay`'s `onDraggingChange`) is
+        // the mask's own real effect swapped out for raw content — the
+        // rest of the time (not dragging, just selected) the canvas shows
+        // the mask's genuine rendered effect, so this always stays
+        // What-You-See-Is-What-You-Export rather than a separate, easily-
+        // out-of-sync approximation (the previous version's actual bug:
+        // `MaskOverlay` used to paint its own fixed-alpha dim/blur preview
+        // that ignored the mask's real `opacity` and `disabled`).
+        const suppressSelectedMaskRender = maskEditingActive && maskDraggingRef.current;
         renderer.draw(
           ctx,
           video,
@@ -415,8 +426,10 @@ export function EditorView({
           cursorSettingsRef.current,
           clipEndTUs,
           activeSlice?.cursorOverride ?? null,
-          cropModeRef.current || selectedMaskIdRef.current !== null,
-          masksActiveAt(masksRef.current, video.currentTime).filter((m) => m.id !== selectedMaskIdRef.current),
+          cropModeRef.current || maskEditingActive,
+          masksActiveAt(masksRef.current, video.currentTime).filter(
+            (m) => !(suppressSelectedMaskRender && m.id === selectedMaskIdRef.current),
+          ),
         );
         // Skip while previewing — the committed playhead (`currentTime`,
         // and the real solid-white indicator it drives in `Timeline`) must
@@ -954,6 +967,17 @@ export function EditorView({
   const selectedSlice = slices.find((s) => s.id === selectedSliceId);
   const selectedZoomKeyframe = selectedZoomIndex !== null ? zoomKeyframes[selectedZoomIndex] : undefined;
   const selectedMask = masks.find((m) => m.id === selectedMaskId);
+  // Whether the selected mask's box should actually be showing right now —
+  // the committed playhead has to be inside *that mask's own* time range,
+  // not just "some mask is selected." Without this, `MaskOverlay` (and the
+  // full-frame/effect-suppression it drives in `tick`) stayed visible no
+  // matter where you scrubbed to while its panel was open, which read as
+  // "the mask doesn't respect its own time range" — this is the fix for
+  // that. Mirrored into a ref (assigned right below, not in an effect —
+  // `tick` needs this frame's value, not last render's) so the render loop
+  // can read it without becoming a dependency of that `useEffect`.
+  const maskPreviewActive = selectedMask ? currentTime >= selectedMask.startS && currentTime < selectedMask.endS : false;
+  maskPreviewActiveRef.current = maskPreviewActive;
 
   return (
     <div className="relative flex h-screen w-screen flex-col bg-neutral-950 text-neutral-300">
@@ -1030,14 +1054,18 @@ export function EditorView({
           {/* Not shown at the same time as `CropOverlay` — crop mode
            * replaces the whole top bar/footer with its own dedicated ones,
            * and `tick` is already forcing the same full-frame view either
-           * way (see `selectedMaskIdRef`'s doc comment), so there's nothing
-           * meaningful to show both at once. */}
-          {!cropMode && selectedMask && (
+           * way (see `maskPreviewActive`'s doc comment), so there's nothing
+           * meaningful to show both at once. Also gated on
+           * `maskPreviewActive` itself, not just "a mask is selected" — see
+           * that constant's doc comment for why. */}
+          {!cropMode && selectedMask && maskPreviewActive && (
             <MaskOverlay
               rect={selectedMask.rect}
               onChangeRect={updateMaskRectLive}
               onCommit={commitDoc}
-              type={selectedMask.type}
+              onDraggingChange={(dragging) => {
+                maskDraggingRef.current = dragging;
+              }}
               frameWidth={effectiveFrameSize.width}
               frameHeight={effectiveFrameSize.height}
               contentRect={cropContentRect}

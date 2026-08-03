@@ -896,11 +896,16 @@ export function Timeline({
               const widthPct = clampPct(((mask.endS - mask.startS) / safeDuration) * 100);
               if (widthPct <= 0) return null;
               const isSelected = selectedMaskId === mask.id;
+              // Distinct from every other track's color (amber = slices,
+              // indigo = zoom) so all four read unambiguously at a glance:
+              // rose for a sensitive (blur) mask, violet for a highlight
+              // one — previously highlight reused amber, which looked the
+              // same as the slice track above it.
               const colorClass = mask.disabled
                 ? "bg-gradient-to-b from-neutral-700 to-neutral-400"
                 : mask.type === "sensitive"
                   ? "bg-gradient-to-b from-rose-800 to-rose-400"
-                  : "bg-gradient-to-b from-amber-600 to-amber-300";
+                  : "bg-gradient-to-b from-violet-700 to-violet-400";
               return (
                 <div
                   key={mask.id}

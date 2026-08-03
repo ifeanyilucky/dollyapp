@@ -360,7 +360,7 @@ export function TopBar({
                 </span>
               </DropdownMenu.Item>
               <DropdownMenu.Item className="mask-item" onSelect={() => onAddMask("highlight")}>
-                <Highlighter className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+                <Highlighter className="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet-400" />
                 <span className="flex flex-col">
                   <span className="font-medium text-neutral-200">Add highlight mask</span>
                   <span className="text-[11px] text-neutral-500">Tints this part of the recording</span>
