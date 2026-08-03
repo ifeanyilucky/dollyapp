@@ -124,13 +124,13 @@ export function StylePanel({
             Pick random wallpaper
           </button>
 
-          <div className="grid grid-cols-4 gap-1.5">
+          <div className="grid grid-cols-8 gap-2.5">
             {WALLPAPER_IMAGES.map((w) => (
               <button
                 key={w.id}
                 type="button"
                 onClick={() => set("wallpaperId", w.id)}
-                className="aspect-square overflow-hidden rounded-md bg-cover bg-center"
+                className="aspect-square overflow-hidden rounded-sm bg-cover bg-center"
                 style={{
                   backgroundImage: `url(${w.url})`,
                   outline: style.wallpaperId === w.id ? "2px solid #f5f5f5" : "none",
