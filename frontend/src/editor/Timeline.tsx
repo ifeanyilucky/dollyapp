@@ -81,6 +81,7 @@ export function Timeline({
   clipEndS,
   onTrimVideoClip,
   onChangeZoomKeyframes,
+  onAddZoomKeyframe,
   onCommitChange,
   slices,
   onSplitClip,
@@ -122,6 +123,10 @@ export function Timeline({
   /** Live update, called continuously while dragging a zoom keyframe (move
    * or trim) — pairs with `onCommitChange` below. */
   onChangeZoomKeyframes: (keyframes: ZoomKeyframe[]) => void;
+  /** Clicking empty space on the zoom track auto-adds a new zoom clip —
+   * `startS`/`endS` are the video-relative seconds of the empty gap it
+   * should fill (see `handleZoomTrackClick`). */
+  onAddZoomKeyframe: (startS: number, endS: number) => void;
   /** Turns whatever's accumulated since the last commit into a single undo
    * step (see `history.ts`) — called once per drag, on release, from
    * `beginDrag`'s `handleEnd`, regardless of which drag kind it was. A
@@ -544,6 +549,36 @@ export function Timeline({
     onSplitZoomKeyframe(index, secondsAtClientX(e.clientX) * 1e6 + videoStartUs);
   }
 
+  /** Clicking empty space on the zoom track (a gap between zoom keyframes,
+   * or a track with none at all) auto-adds a 1.6x zoom clip filling that
+   * gap: from the end of the keyframe just before the click to the start
+   * of the one just after it, clamped to the clip's trimmed range — with no
+   * keyframes at all, the whole clip. Clicks that land on an actual
+   * keyframe block (or one of its trim/move handles) have `e.target` be
+   * that element, not the track's own background, so they keep their
+   * existing select/split/seek behavior instead. */
+  function handleZoomTrackClick(e: React.MouseEvent) {
+    if (splitArmed) return;
+    // Only the track's own background reaches here — see the doc comment
+    // above. A click on a keyframe block bubbles up through its children
+    // with `e.target` = that block, which we leave to `handleZoomClick`/
+    // `beginDrag` (and the parent `handleTrackClick` seek).
+    if (e.target !== e.currentTarget) return;
+    const clickUs = secondsAtClientX(e.clientX) * 1e6 + videoStartUs;
+    if (zoomKeyframes.some((kf) => clickUs >= kf.startT && clickUs <= kf.endT)) return;
+
+    const clipStartUs = clipStartS * 1e6 + videoStartUs;
+    const clipEndUs = (clipEndS > 0 ? clipEndS : safeDuration) * 1e6 + videoStartUs;
+    let startUs = clipStartUs;
+    let endUs = clipEndUs;
+    for (const kf of zoomKeyframes) {
+      if (kf.endT <= clickUs && kf.endT > startUs) startUs = kf.endT;
+      if (kf.startT >= clickUs && kf.startT < endUs) endUs = kf.startT;
+    }
+    e.stopPropagation();
+    onAddZoomKeyframe((startUs - videoStartUs) / 1e6, (endUs - videoStartUs) / 1e6);
+  }
+
   function zoomBy(delta: number) {
     setZoomLevel((z) => clampS(z + delta, MIN_ZOOM_LEVEL, MAX_ZOOM_LEVEL));
   }
@@ -821,6 +856,7 @@ export function Timeline({
             style={{ height: zoomFocused ? TRACK_HEIGHT_NORMAL_PX : TRACK_HEIGHT_COMPACT_PX }}
             onMouseEnter={() => setHoveredTrack("zoom")}
             onMouseLeave={() => setHoveredTrack((t) => (t === "zoom" ? null : t))}
+            onClick={handleZoomTrackClick}
           >
             {zoomKeyframes.map((kf, index) => {
               const startS = (kf.startT - videoStartUs) / 1e6;

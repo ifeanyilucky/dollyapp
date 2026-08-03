@@ -1,6 +1,6 @@
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
-import { generateZoomKeyframes, splitKeyframeAt, type ZoomKeyframe } from "../motion-engine";
+import { DEFAULT_ZOOM_KEYFRAME_EXTRAS, generateZoomKeyframes, splitKeyframeAt, type ZoomKeyframe } from "../motion-engine";
 import { AnimationPanel } from "./AnimationPanel";
 import { aspectRatioPreset } from "./aspect";
 import { deleteRecording, loadRecording, mediaSrc, revealInFinder, type LoadedRecording } from "./api";
@@ -33,6 +33,10 @@ import { ZoomEditorPanel } from "./ZoomEditorPanel";
  * step) — Shift jumps a full second instead, for covering more ground
  * quickly. */
 const FRAME_STEP_S = 1 / 30;
+
+/** Default level for a zoom clip auto-added by clicking empty space on the
+ * timeline's zoom track — see `addZoomKeyframe`. */
+const ADDED_ZOOM_LEVEL = 1.6;
 
 /**
  * Post-recording preview: plays `screen.mov` through the same motion
@@ -996,6 +1000,56 @@ export function EditorView({
     setSelectedZoomIndex(null);
   }
 
+  /** Cursor position (point space) at `tUs` — the pan fallback center for a
+   * freshly-added zoom clip (`addZoomKeyframe` below), so export frames
+   * without a live position still have something sensible to zoom toward
+   * (with `panMode: "auto"` the *live* cursor drives pan during playback,
+   * exactly as it does for generated keyframes). Returns `null` when the
+   * track has no samples at all, so the caller falls back to frame center. */
+  function cursorCenterAtUs(tUs: number): { x: number; y: number } | null {
+    if (!loaded) return null;
+    const samples = loaded.cursorTrack.samples;
+    if (samples.length === 0) return null;
+    if (tUs <= samples[0].t) return { x: samples[0].x, y: samples[0].y };
+    const last = samples[samples.length - 1];
+    if (tUs >= last.t) return { x: last.x, y: last.y };
+    let lo = 0;
+    let hi = samples.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (samples[mid].t <= tUs) lo = mid + 1;
+      else hi = mid;
+    }
+    const b = samples[lo];
+    const a = samples[lo - 1];
+    const span = b.t - a.t;
+    const f = span > 0 ? (tUs - a.t) / span : 0;
+    return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+  }
+
+  /** `Timeline`'s `onAddZoomKeyframe` — clicking empty space on the zoom
+   * track auto-adds a 1.6x zoom clip filling that gap (`Timeline`'s
+   * `handleZoomTrackClick` derives `startS`/`endS`). Inserted in start
+   * order, then selected immediately so `ZoomEditorPanel` opens the same
+   * way a freshly-split slice or added mask does. */
+  function addZoomKeyframe(startS: number, endS: number) {
+    if (!loaded) return;
+    const startUs = Math.round(startS * 1e6 + loaded.meta.videoStartUs);
+    const endUs = Math.round(endS * 1e6 + loaded.meta.videoStartUs);
+    if (endUs <= startUs) return;
+    const kf: ZoomKeyframe = {
+      startT: startUs,
+      endT: endUs,
+      level: ADDED_ZOOM_LEVEL,
+      center: cursorCenterAtUs(startUs) ?? { x: effectiveFrameSize.width / 2, y: effectiveFrameSize.height / 2 },
+      ...DEFAULT_ZOOM_KEYFRAME_EXTRAS,
+    };
+    setDoc((d) => ({ ...d, zoomKeyframes: [...d.zoomKeyframes, kf].sort((a, b) => a.startT - b.startT) }));
+    setSelectedZoomIndex(zoomKeyframes.filter((k) => k.startT < startUs).length);
+    setSelectedSliceId(null);
+    setSelectedMaskId(null);
+  }
+
   function updateMask(next: MaskClip) {
     setDoc((d) => ({ ...d, masks: d.masks.map((m) => (m.id === next.id ? next : m)) }));
   }
@@ -1378,6 +1432,7 @@ export function EditorView({
             clipEndS={clipEndS}
             onTrimVideoClip={trimVideoClipLive}
             onChangeZoomKeyframes={updateAllZoomKeyframesLive}
+            onAddZoomKeyframe={addZoomKeyframe}
             onCommitChange={commitDoc}
             slices={slices}
             onSplitClip={handleSplitClip}
