@@ -4,6 +4,8 @@ import type { ZoomKeyframe } from "../motion-engine";
 import { setExportDestination, writeExportFile, type LoadedRecording } from "./api";
 import type { AnimationSettings } from "./animationSettings";
 import { aspectRatioPreset, type AspectRatioId } from "./aspect";
+import type { AudioSettings } from "./audioSettings";
+import { BackgroundAudioPlayer, decodeCustomAudioTrack, getAmbientBuffer, isAmbientTrackId } from "./backgroundAudio";
 import type { CropRect } from "./crop";
 import type { CursorSettings } from "./cursorSettings";
 import { masksActiveAt, type MaskClip } from "./masks";
@@ -30,6 +32,10 @@ export interface ExportOptions {
    * blur. See `renderer.ts`'s `SceneRendererOptions`/`draw` for how these
    * reach `SceneRenderer`. */
   animationSettings: AnimationSettings;
+  /** Audio panel settings — background track selection, volume, mute. See
+   * `backgroundAudio.ts` for how the chosen track is resolved and mixed
+   * into the exported stream. */
+  audioSettings: AudioSettings;
   aspectRatioId: AspectRatioId;
   /** Output resolution tier — same one the live preview canvas rendered
    * at (see `resolution.ts`); "preview and export must never diverge". */
@@ -121,6 +127,19 @@ async function loadVideoBlobUrl(path: string): Promise<{ url: string; revoke: ()
   const blob = new Blob([buffer]);
   const url = URL.createObjectURL(blob);
   return { url, revoke: () => URL.revokeObjectURL(url) };
+}
+
+/** Resolves `AudioSettings.trackId` into a real, loopable `AudioBuffer` —
+ * a built-in ambient preset, the user's uploaded file, or `null` for "no
+ * track"/a custom upload that failed to decode. Shared with the live
+ * preview's own resolution logic in `EditorView` (kept as two call sites
+ * rather than one shared function only because one runs inside a React
+ * effect and the other inside this plain async function — the actual
+ * resolution rule is identical). */
+async function resolveAudioBuffer(ctx: AudioContext, settings: AudioSettings): Promise<AudioBuffer | null> {
+  if (!settings.trackId) return null;
+  if (isAmbientTrackId(settings.trackId)) return getAmbientBuffer(settings.trackId);
+  return settings.customAudioUrl ? decodeCustomAudioTrack(ctx, settings.customAudioUrl) : null;
 }
 
 /**
@@ -223,8 +242,21 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
   let recorder: MediaRecorder | null = null;
   let stream: MediaStream | null = null;
   let running = false;
+  // Background audio (Audio panel) — only stood up at all when a track is
+  // actually selected, so an export with no background audio costs nothing
+  // extra and behaves exactly as it did before this existed.
+  let bgAudioCtx: AudioContext | null = null;
+  let bgAudioPlayer: BackgroundAudioPlayer | null = null;
+  let bgAudioDestination: MediaStreamAudioDestinationNode | null = null;
 
   try {
+    if (opts.audioSettings.trackId) {
+      bgAudioCtx = new AudioContext();
+      bgAudioDestination = bgAudioCtx.createMediaStreamDestination();
+      bgAudioPlayer = new BackgroundAudioPlayer(bgAudioCtx, bgAudioDestination);
+      bgAudioPlayer.setVolume(opts.audioSettings.volume, opts.audioSettings.muted);
+      bgAudioPlayer.setBuffer(await resolveAudioBuffer(bgAudioCtx, opts.audioSettings));
+    }
     await waitForEvent(video, "loadedmetadata", 30_000);
 
     // Effective in/out, clamped to what the file actually contains.
@@ -264,6 +296,9 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
     };
 
     stream = canvas.captureStream(captureManually ? 0 : 30);
+    if (bgAudioDestination) {
+      for (const audioTrack of bgAudioDestination.stream.getAudioTracks()) stream.addTrack(audioTrack);
+    }
     const track = stream.getVideoTracks()[0] as MediaStreamTrack & { requestFrame?: () => void };
     recorder = new MediaRecorder(stream, {
       ...(container.mimeType ? { mimeType: container.mimeType } : {}),
@@ -284,6 +319,7 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
     running = true;
     recorder.start(1000);
 
+    bgAudioPlayer?.play();
     video.playbackRate = 1;
     await video.play();
 
@@ -342,6 +378,8 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
     } catch {
       // stream may be half-constructed
     }
+    bgAudioPlayer?.dispose();
+    void bgAudioCtx?.close();
     document.body.removeChild(canvas);
     document.body.removeChild(video);
     revokeVideoUrl();
