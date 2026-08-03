@@ -45,6 +45,15 @@ impl BundleReader {
     pub fn screen_video_path(&self) -> PathBuf {
         self.root.join(names::SCREEN_VIDEO)
     }
+
+    /// Always returns the path `mic.wav` *would* live at, whether or not
+    /// mic capture was actually enabled for this recording — callers must
+    /// check `RecordingMeta.has_mic_audio` before trying to read it, the
+    /// same way `screen_video_path` is unconditional but every recording is
+    /// guaranteed to actually have a `screen.mov`.
+    pub fn mic_audio_path(&self) -> PathBuf {
+        self.root.join(names::MIC_AUDIO)
+    }
 }
 
 /// Lists `*.motionrec` bundles directly inside `dir`, most recently

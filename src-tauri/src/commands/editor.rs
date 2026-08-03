@@ -12,6 +12,9 @@ pub struct LoadedRecording {
     /// playable `<video src>` via `convertFileSrc` (see ARCHITECTURE.md /
     /// the asset-protocol scope configured for `$VIDEO/Dolly/**`).
     screen_video_path: String,
+    /// Absolute path `mic.wav` would live at — only meaningful when
+    /// `meta.has_mic_audio` is true (see `BundleReader::mic_audio_path`).
+    mic_audio_path: String,
 }
 
 #[tauri::command]
@@ -20,11 +23,13 @@ pub fn load_recording(bundle_path: String) -> Result<LoadedRecording, String> {
     let meta = reader.read_meta().map_err(|e| e.to_string())?;
     let cursor_track = reader.read_cursor_track().map_err(|e| e.to_string())?;
     let screen_video_path = reader.screen_video_path().to_string_lossy().into_owned();
+    let mic_audio_path = reader.mic_audio_path().to_string_lossy().into_owned();
 
     Ok(LoadedRecording {
         meta,
         cursor_track,
         screen_video_path,
+        mic_audio_path,
     })
 }
 
