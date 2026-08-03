@@ -484,26 +484,107 @@ export class SceneRenderer {
     return { blurPx, alpha };
   }
 
-  /** Draws every active mask as a full-`content`-rect cover, clipped to
-   * the same rounded rect the video content itself is (so a mask's edges
-   * match the content's own corners rather than showing square corners
-   * poking out past them). A "sensitive" mask is always fully opaque
-   * black — no partial visibility, since the entire point is that nothing
-   * underneath can leak through; "highlight" is `HIGHLIGHT_MASK_COLOR` at
-   * the mask's own `opacity`. Multiple simultaneously-active masks (an
-   * edge case, not the common one — see `masksActiveAt`) simply layer,
-   * each drawn in array order. */
-  private drawMasks(ctx: CanvasRenderingContext2D, content: Rect, style: StyleSettings, masks: MaskClip[]): void {
+  /** Draws every active mask's *own rectangular region* — not the whole
+   * frame (see `masks.ts`'s doc comment for what changed and why) —
+   * projected from `mask.rect`'s point-space coordinates through the
+   * *current* `viewport` into `content`-rect pixel space, the same way
+   * the cursor's on-screen position is projected in `draw` above. That
+   * projection is what makes a mask correctly track a zoom/pan instead of
+   * staying pinned to a fixed spot on the canvas while the content
+   * underneath moves — the same reason `origin`/`crop` re-anchor
+   * everything else this renderer draws. Clipped to the content's own
+   * rounded rect, same as the main video draw, so a mask near the edge
+   * doesn't poke square corners out past it. Multiple simultaneously-
+   * active masks (an edge case, not the common one — see `masksActiveAt`)
+   * simply layer, each drawn in array order. */
+  private drawMasks(
+    ctx: CanvasRenderingContext2D,
+    video: HTMLVideoElement,
+    viewport: Rect,
+    content: Rect,
+    style: StyleSettings,
+    masks: MaskClip[],
+  ): void {
     if (masks.length === 0) return;
     ctx.save();
     roundedRectPath(ctx, content, style.cornerRadius);
     ctx.clip();
     for (const mask of masks) {
-      ctx.globalAlpha = mask.type === "sensitive" ? 1 : mask.opacity;
-      ctx.fillStyle = mask.type === "sensitive" ? "#000000" : HIGHLIGHT_MASK_COLOR;
-      ctx.fillRect(content.x, content.y, content.width, content.height);
+      const rx = content.x + ((mask.rect.x - viewport.x) / viewport.width) * content.width;
+      const ry = content.y + ((mask.rect.y - viewport.y) / viewport.height) * content.height;
+      const rw = (mask.rect.width / viewport.width) * content.width;
+      const rh = (mask.rect.height / viewport.height) * content.height;
+      if (rw <= 0 || rh <= 0) continue;
+
+      if (mask.type === "sensitive") {
+        this.drawBlurredRegion(ctx, video, mask.rect, rx, ry, rw, rh);
+      } else {
+        // Highlight: dim everything *outside* this rect — four bands
+        // (top/bottom span the full content width, left/right fill
+        // exactly the rect's own height) rather than a single overlay
+        // with a cutout, the same technique `MaskOverlay`'s on-canvas
+        // preview and `CropOverlay`'s crop-exclusion dimming both already
+        // use for the identical "dim around a rect" shape. The rect's own
+        // area is deliberately untouched — a highlight's entire purpose is
+        // that the highlighted thing stays completely normal.
+        ctx.fillStyle = `rgba(0,0,0,${mask.opacity})`;
+        ctx.fillRect(content.x, content.y, content.width, ry - content.y);
+        ctx.fillRect(content.x, ry + rh, content.width, content.y + content.height - (ry + rh));
+        ctx.fillRect(content.x, ry, rx - content.x, rh);
+        ctx.fillRect(rx + rw, ry, content.x + content.width - (rx + rw), rh);
+      }
     }
     ctx.restore();
+  }
+
+  /** Blurs just the `sourceRect` (point-space) region of `video` and draws
+   * it at `(destX, destY, destW, destH)` in canvas-pixel space — the
+   * "sensitive" mask's actual redaction. Draws into a scratch canvas
+   * *overscanned* by `MASK_BLUR_OVERSCAN_FACTOR`'s worth of extra margin
+   * before blurring, then composites back only the unpadded center: a
+   * Gaussian blur sampled right at the edge of a canvas that has nothing
+   * beyond it blurs *toward transparent* there (there's no real pixel data
+   * to blend with past the edge), which would let the sharp, unblurred
+   * frame already drawn underneath show through at the masked box's own
+   * border — overscanning means every blurred pixel that actually gets
+   * composited back had real neighboring picture data on all sides to
+   * blur with, so the box is solidly blurred edge-to-edge. */
+  private drawBlurredRegion(
+    ctx: CanvasRenderingContext2D,
+    video: HTMLVideoElement,
+    sourceRect: CropRect,
+    destX: number,
+    destY: number,
+    destW: number,
+    destH: number,
+  ): void {
+    const blurPx = Math.max(destW, destH) * MASK_BLUR_FRACTION;
+    const padPx = Math.ceil(blurPx * MASK_BLUR_OVERSCAN_FACTOR);
+    const bw = Math.max(1, Math.round(destW)) + padPx * 2;
+    const bh = Math.max(1, Math.round(destH)) + padPx * 2;
+
+    // The overscanned source rect, converted back from dest-pixel padding
+    // into `sourceRect`'s own (point-space) units so the extra sampled
+    // margin lines up 1:1 with the extra destination margin.
+    const padSourceX = (padPx / destW) * sourceRect.width;
+    const padSourceY = (padPx / destH) * sourceRect.height;
+    const sx = (sourceRect.x - padSourceX) * this.scaleFactor + this.cropOffsetPx.x;
+    const sy = (sourceRect.y - padSourceY) * this.scaleFactor + this.cropOffsetPx.y;
+    const sw = (sourceRect.width + padSourceX * 2) * this.scaleFactor;
+    const sh = (sourceRect.height + padSourceY * 2) * this.scaleFactor;
+
+    const buffer = this.maskBlurBuffer ?? document.createElement("canvas");
+    buffer.width = bw;
+    buffer.height = bh;
+    const bctx = buffer.getContext("2d");
+    if (!bctx) return;
+    bctx.clearRect(0, 0, bw, bh);
+    bctx.filter = `blur(${blurPx}px)`;
+    bctx.drawImage(video, sx, sy, sw, sh, 0, 0, bw, bh);
+    bctx.filter = "none";
+    this.maskBlurBuffer = buffer;
+
+    ctx.drawImage(buffer, padPx, padPx, bw - padPx * 2, bh - padPx * 2, destX, destY, destW, destH);
   }
 
   /** `outputAspect` when set (the viewport is reframed to match it, see

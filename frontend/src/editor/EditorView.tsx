@@ -12,7 +12,8 @@ import { DEFAULT_DOCUMENT, type EditorDocument } from "./document";
 import { exportVideo } from "./exportVideo";
 import { useHistoryState } from "./history";
 import { IconRail, type ToolId } from "./IconRail";
-import { createMask, defaultMaskRange, masksActiveAt, type MaskClip, type MaskType } from "./masks";
+import { MaskOverlay } from "./MaskEditor";
+import { createMask, defaultMaskRange, defaultMaskRect, masksActiveAt, type MaskClip, type MaskType } from "./masks";
 import { MaskEditorPanel } from "./MaskEditorPanel";
 import { computeContentRect, SceneRenderer, shiftCursorTrack } from "./renderer";
 import { initialSlices, resizeSlices, sliceAt, splitSliceAt, type ClipSlice } from "./slices";
@@ -187,6 +188,15 @@ export function EditorView({
   // `renderer.draw()`'s `forceFullFrame` (see its doc comment).
   const cropModeRef = useRef(cropMode);
   cropModeRef.current = cropMode;
+  // Read from `tick` without becoming a dependency of it — same pattern as
+  // the refs above. While a mask is selected (its `MaskOverlay` showing on
+  // the canvas), `tick` (a) forces the same full, unzoomed frame crop mode
+  // does — so the box can be positioned against a stable view instead of
+  // fighting an in-progress zoom/pan — and (b) excludes *that* mask from
+  // the masks it actually renders, so its own blur/dim doesn't obscure the
+  // very content being lined up against.
+  const selectedMaskIdRef = useRef(selectedMaskId);
+  selectedMaskIdRef.current = selectedMaskId;
   // The recording's own point-space dimensions (independent of crop,
   // resolution, or aspect ratio) — the coordinate space `doc.crop`/
   // `draftCrop` live in (see `crop.ts`). Set once `loaded` (where it's
@@ -380,12 +390,14 @@ export function EditorView({
         }
         lastSoundCheckTUsRef.current = tUs;
 
-        // `cropModeRef.current` as `forceFullFrame`: crop mode wants to
-        // show the entire selectable area (see `CropOverlay`), not
-        // whatever a zoom keyframe currently has things reframed to. Any
-        // *confirmed* crop is already baked into `renderer` itself (its
-        // effective frame — see `effectiveCrop`/the renderer-construction
-        // effect above), so nothing else here needs to know about it.
+        // `forceFullFrame`: crop mode wants to show the entire selectable
+        // area (see `CropOverlay`), not whatever a zoom keyframe currently
+        // has things reframed to — and editing a mask's box wants exactly
+        // the same stable, unzoomed view for the same reason (see
+        // `selectedMaskIdRef`'s doc comment). Any *confirmed* crop is
+        // already baked into `renderer` itself (its effective frame — see
+        // `effectiveCrop`/the renderer-construction effect above), so
+        // nothing else here needs to know about it.
         renderer.draw(
           ctx,
           video,
@@ -395,8 +407,8 @@ export function EditorView({
           cursorSettingsRef.current,
           clipEndTUs,
           activeSlice?.cursorOverride ?? null,
-          cropModeRef.current,
-          masksActiveAt(masksRef.current, video.currentTime),
+          cropModeRef.current || selectedMaskIdRef.current !== null,
+          masksActiveAt(masksRef.current, video.currentTime).filter((m) => m.id !== selectedMaskIdRef.current),
         );
         // Skip while previewing — the committed playhead (`currentTime`,
         // and the real solid-white indicator it drives in `Timeline`) must
@@ -769,11 +781,15 @@ export function EditorView({
 
   /** The top bar's "Mask" dropdown — adds a new mask starting at the
    * current playhead (`defaultMaskRange`, `DEFAULT_MASK_DURATION_S` long,
-   * clamped to the clip) and immediately selects it, opening
-   * `MaskEditorPanel` the same way clicking a freshly-split slice would. */
+   * clamped to the clip), a centered box sized off the *effective* frame
+   * (`defaultMaskRect` — see `effectiveFrameSize`'s doc comment), and
+   * immediately selects it, opening `MaskEditorPanel` (and `MaskOverlay`
+   * on the canvas, for repositioning/resizing the box) the same way
+   * clicking a freshly-split slice would. */
   function addMask(type: MaskType) {
     const { startS, endS } = defaultMaskRange(currentTime, clipStartS, clipEndS);
-    const mask = createMask(startS, endS, type);
+    const rect = defaultMaskRect(effectiveFrameSize.width, effectiveFrameSize.height);
+    const mask = createMask(startS, endS, type, rect);
     setDoc((d) => ({ ...d, masks: [...d.masks, mask] }));
     setSelectedMaskId(mask.id);
     setSelectedSliceId(null);
@@ -782,6 +798,17 @@ export function EditorView({
 
   function updateMask(next: MaskClip) {
     setDoc((d) => ({ ...d, masks: d.masks.map((m) => (m.id === next.id ? next : m)) }));
+  }
+
+  /** `MaskOverlay`'s live update while dragging the selected mask's box —
+   * pairs with `commitDoc` on release, same as every other drag-driven
+   * edit. */
+  function updateMaskRectLive(next: CropRect) {
+    if (!selectedMaskId) return;
+    setDocTransient((d) => ({
+      ...d,
+      masks: d.masks.map((m) => (m.id === selectedMaskId ? { ...m, rect: next } : m)),
+    }));
   }
 
   /** Unlike `removeSlice` (which marks `removed: true` to preserve the
@@ -850,6 +877,14 @@ export function EditorView({
     height: loaded.meta.display.heightPx / loaded.meta.display.scaleFactor,
   };
   sourceFrameSizeRef.current = sourceFrameSize;
+
+  // The *effective* frame — the confirmed crop's own size once one exists,
+  // `sourceFrameSize` otherwise. `MaskClip.rect` lives in this space (see
+  // its doc comment): a mask is positioned relative to "the recording as
+  // it's actually being edited," which is the cropped view once a crop is
+  // confirmed, the same way zoom keyframes and the cursor overlay are
+  // already re-anchored to it internally by `SceneRenderer`.
+  const effectiveFrameSize = crop ? { width: crop.width, height: crop.height } : sourceFrameSize;
 
   const sourceAspect = loaded.meta.display.widthPx / loaded.meta.display.heightPx;
   const outputAspect = aspectRatioPreset(aspectRatioId).ratio ?? sourceAspect;
@@ -978,6 +1013,25 @@ export function EditorView({
               onChangeDraft={setDraftCrop}
               sourceFrameWidth={sourceFrameSize.width}
               sourceFrameHeight={sourceFrameSize.height}
+              contentRect={cropContentRect}
+              canvasPxWidth={canvasWidth}
+              canvasPxHeight={canvasHeight}
+              canvasRef={canvasRef}
+            />
+          )}
+          {/* Not shown at the same time as `CropOverlay` — crop mode
+           * replaces the whole top bar/footer with its own dedicated ones,
+           * and `tick` is already forcing the same full-frame view either
+           * way (see `selectedMaskIdRef`'s doc comment), so there's nothing
+           * meaningful to show both at once. */}
+          {!cropMode && selectedMask && (
+            <MaskOverlay
+              rect={selectedMask.rect}
+              onChangeRect={updateMaskRectLive}
+              onCommit={commitDoc}
+              type={selectedMask.type}
+              frameWidth={effectiveFrameSize.width}
+              frameHeight={effectiveFrameSize.height}
               contentRect={cropContentRect}
               canvasPxWidth={canvasWidth}
               canvasPxHeight={canvasHeight}
