@@ -36,6 +36,12 @@ tauri-plugin-dialog = "2.7.2"
 # all) so `dol_protocol` can serve byte ranges straight off disk without
 # decompressing.
 zip = { version = "4.2.0", default-features = false, features = ["deflate"] }
+# Serve `dol://` byte-range requests (HTTP Range parsing) and percent-encode
+# the `.dol` path that travels in a `dol://` URL — all already in the tree
+# via tauri; pulled in directly so `dol_protocol` can use them.
+http = "1"
+http-range = "0.1.5"
+percent-encoding = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.5"
