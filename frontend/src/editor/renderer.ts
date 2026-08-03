@@ -7,6 +7,7 @@ import {
 } from "../motion-engine";
 import { cursorSizeMultiplier, DEFAULT_CURSOR_SETTINGS, type CursorSettings, type CursorStyleId } from "./cursorSettings";
 import type { CropRect } from "./crop";
+import type { MaskClip } from "./masks";
 import type { SliceCursorOverride } from "./slices";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
 import { GRADIENT_PRESETS, paintCanvasGradient, WALLPAPER_IMAGES } from "./wallpapers";
@@ -75,6 +76,10 @@ const LOOP_BLEND_DURATION_US = 1_200_000;
  * not to flicker during a slow, deliberate drag. */
 const IDLE_WINDOW_US = 500_000;
 const IDLE_THRESHOLD_PX = 3;
+/** "Highlight" mask tint — a distinct, unmistakably-"marked" color (an
+ * actual highlighter-pen amber) rather than reusing an accent color already
+ * meaningful elsewhere (indigo = zoom, amber-on-black = slices). */
+const HIGHLIGHT_MASK_COLOR = "#fbbf24";
 
 export interface Rect {
   x: number;
@@ -300,7 +305,12 @@ export class SceneRenderer {
    * `EditorView`'s `cropMode`). The motion engine's spring state is simply
    * not advanced while this is true — resumes, with a brief catch-up
    * animation bounded by its own `transformAt` clamp, once it's false
-   * again. */
+   * again. `activeMasks`: whichever `MaskClip`s (see `masks.ts`) are in
+   * effect at `tUs`, resolved by the caller via `masksActiveAt` the same
+   * way `sliceCursorOverride` is resolved via `sliceAt` — drawn as a
+   * full-content-rect cover/tint *underneath* the cursor (a mask hides
+   * recorded screen content; the cursor is an editor-added annotation
+   * layer, not itself part of what a mask needs to hide). */
   draw(
     ctx: CanvasRenderingContext2D,
     video: HTMLVideoElement,
@@ -311,6 +321,7 @@ export class SceneRenderer {
     clipEndTUs = 0,
     sliceCursorOverride: SliceCursorOverride | null = null,
     forceFullFrame = false,
+    activeMasks: MaskClip[] = [],
   ): void {
     const canvas = ctx.canvas;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -398,6 +409,8 @@ export class SceneRenderer {
       ctx.restore();
     }
 
+    this.drawMasks(ctx, content, style, activeMasks);
+
     // `cursor` still drives pan above even when the glyph itself is
     // hidden — this flag is purely visual, not a "stop tracking" switch.
     if (!cursor || !showCursor || sliceCursorOverride?.hideCursor) return;
@@ -452,6 +465,28 @@ export class SceneRenderer {
     const blurPx = intensity * MAX_CURSOR_BLUR_PX;
     const alpha = Math.max(MIN_CURSOR_ALPHA, 1 - speedPerMs * CURSOR_FADE_SENSITIVITY);
     return { blurPx, alpha };
+  }
+
+  /** Draws every active mask as a full-`content`-rect cover, clipped to
+   * the same rounded rect the video content itself is (so a mask's edges
+   * match the content's own corners rather than showing square corners
+   * poking out past them). A "sensitive" mask is always fully opaque
+   * black — no partial visibility, since the entire point is that nothing
+   * underneath can leak through; "highlight" is `HIGHLIGHT_MASK_COLOR` at
+   * the mask's own `opacity`. Multiple simultaneously-active masks (an
+   * edge case, not the common one — see `masksActiveAt`) simply layer,
+   * each drawn in array order. */
+  private drawMasks(ctx: CanvasRenderingContext2D, content: Rect, style: StyleSettings, masks: MaskClip[]): void {
+    if (masks.length === 0) return;
+    ctx.save();
+    roundedRectPath(ctx, content, style.cornerRadius);
+    ctx.clip();
+    for (const mask of masks) {
+      ctx.globalAlpha = mask.type === "sensitive" ? 1 : mask.opacity;
+      ctx.fillStyle = mask.type === "sensitive" ? "#000000" : HIGHLIGHT_MASK_COLOR;
+      ctx.fillRect(content.x, content.y, content.width, content.height);
+    }
+    ctx.restore();
   }
 
   /** `outputAspect` when set (the viewport is reframed to match it, see

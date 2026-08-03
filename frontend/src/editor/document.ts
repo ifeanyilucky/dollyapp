@@ -2,6 +2,7 @@ import type { ZoomKeyframe } from "../motion-engine";
 import type { AspectRatioId } from "./aspect";
 import type { CropRect } from "./crop";
 import { DEFAULT_CURSOR_SETTINGS, type CursorSettings } from "./cursorSettings";
+import type { MaskClip } from "./masks";
 import { DEFAULT_RESOLUTION, type ResolutionId } from "./resolution";
 import type { ClipSlice } from "./slices";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
@@ -33,6 +34,9 @@ export interface EditorDocument {
   clipEndS: number;
   slices: ClipSlice[];
   cursorSettings: CursorSettings;
+  /** Independent, possibly-overlapping full-frame time ranges — see
+   * `masks.ts`'s module doc comment for how these differ from `slices`. */
+  masks: MaskClip[];
 }
 
 export const DEFAULT_DOCUMENT: EditorDocument = {
@@ -46,4 +50,5 @@ export const DEFAULT_DOCUMENT: EditorDocument = {
   clipEndS: 0,
   slices: [],
   cursorSettings: DEFAULT_CURSOR_SETTINGS,
+  masks: [],
 };

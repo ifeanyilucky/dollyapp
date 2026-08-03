@@ -5,6 +5,7 @@ import { setExportDestination, writeExportFile, type LoadedRecording } from "./a
 import { aspectRatioPreset, type AspectRatioId } from "./aspect";
 import type { CropRect } from "./crop";
 import type { CursorSettings } from "./cursorSettings";
+import { masksActiveAt, type MaskClip } from "./masks";
 import { SceneRenderer } from "./renderer";
 import { computeOutputSize, resolutionPreset, type ResolutionId } from "./resolution";
 import { sliceAt, type ClipSlice } from "./slices";
@@ -20,6 +21,7 @@ export interface ExportOptions {
   clipStartS: number;
   clipEndS: number;
   slices: ClipSlice[];
+  masks: MaskClip[];
   style: StyleSettings;
   showCursor: boolean;
   cursorSettings: CursorSettings;
@@ -126,9 +128,10 @@ async function loadVideoBlobUrl(path: string): Promise<{ url: string; revoke: ()
  *
  * Everything applied in the editor is baked in: the zoom keyframes (all
  * timeline moves/trims), the amber-bar clip in/out trim, split slices
- * (removed slices skipped, per-slice speed + cursor override), background/
- * shadow/padding styling, the animated cursor overlay (style/size/click
- * effects/idle-hide/loop), and the output aspect ratio.
+ * (removed slices skipped, per-slice speed + cursor override), masks
+ * (sensitive/highlight, skipping `disabled` ones — see `masks.ts`),
+ * background/shadow/padding styling, the animated cursor overlay
+ * (style/size/click effects/idle-hide/loop), and the output aspect ratio.
  *
  * Returns the chosen destination path, or `null` if the user cancelled the
  * save dialog.
@@ -246,6 +249,8 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
         opts.cursorSettings,
         clipEndTUs,
         active?.cursorOverride ?? null,
+        false,
+        masksActiveAt(opts.masks, tS),
       );
     };
 

@@ -1,6 +1,7 @@
 import { Pause, Play, Scissors, SkipBack, SkipForward } from "lucide-react";
 import { useRef, useState } from "react";
 import type { ZoomKeyframe } from "../motion-engine";
+import type { MaskClip } from "./masks";
 import { ResolutionPicker } from "./ResolutionPicker";
 import type { ResolutionId } from "./resolution";
 import type { ClipSlice } from "./slices";
@@ -33,7 +34,8 @@ const CLICK_MOVE_THRESHOLD_PX = 4;
  * flight even if the pointer strays off the element. */
 type ActiveDrag =
   | { kind: "zoom-move" | "zoom-trim-left" | "zoom-trim-right"; index: number }
-  | { kind: "video-trim-left" | "video-trim-right" };
+  | { kind: "video-trim-left" | "video-trim-right" }
+  | { kind: "mask-move" | "mask-trim-left" | "mask-trim-right"; id: string };
 
 export function Timeline({
   duration,
@@ -54,6 +56,9 @@ export function Timeline({
   onSelectSlice,
   onSplitZoomKeyframe,
   onSelectZoomKeyframe,
+  masks,
+  onChangeMasks,
+  onSelectMask,
   resolution,
   onChangeResolution,
   sourceWidthPx,
@@ -95,6 +100,12 @@ export function Timeline({
   onSelectSlice: (id: string) => void;
   onSplitZoomKeyframe: (index: number, atT: number) => void;
   onSelectZoomKeyframe: (index: number) => void;
+  masks: MaskClip[];
+  /** Live update, called continuously while dragging a mask clip (move or
+   * trim) — pairs with `onCommitChange` below, same as
+   * `onChangeZoomKeyframes`. */
+  onChangeMasks: (masks: MaskClip[]) => void;
+  onSelectMask: (id: string) => void;
   /** Output resolution — see `ResolutionPicker`'s doc comment for why this
    * lives next to the split/scissors button and also drives `exportVideo`,
    * not just the preview. */
@@ -240,6 +251,42 @@ export function Timeline({
         commitZoom(index, clampS(origStartS + deltaS, 0, origEndS - MIN_DRAG_SECONDS), origEndS);
       } else {
         commitZoom(index, origStartS, clampS(origEndS + deltaS, origStartS + MIN_DRAG_SECONDS, safeDuration));
+      }
+    });
+  }
+
+  function commitMask(id: string, startS: number, endS: number) {
+    onChangeMasks(masks.map((m) => (m.id === id ? { ...m, startS, endS } : m)));
+  }
+
+  function handleMaskMove(e: React.PointerEvent<HTMLDivElement>, mask: MaskClip) {
+    const origStartS = mask.startS;
+    const durS = mask.endS - mask.startS;
+    // Captured now, not read from `e` inside the click callback below — see
+    // `handleZoomMove`'s identical comment on why.
+    const clickX = e.clientX;
+    beginDrag(
+      e,
+      { kind: "mask-move", id: mask.id },
+      (deltaS) => {
+        const newStart = clampS(origStartS + deltaS, 0, safeDuration - durS);
+        commitMask(mask.id, newStart, newStart + durS);
+      },
+      () => {
+        onSeek(secondsAtClientX(clickX));
+        onSelectMask(mask.id);
+      },
+    );
+  }
+
+  function handleMaskTrim(e: React.PointerEvent<HTMLDivElement>, mask: MaskClip, edge: "left" | "right") {
+    const origStartS = mask.startS;
+    const origEndS = mask.endS;
+    beginDrag(e, { kind: edge === "left" ? "mask-trim-left" : "mask-trim-right", id: mask.id }, (deltaS) => {
+      if (edge === "left") {
+        commitMask(mask.id, clampS(origStartS + deltaS, 0, origEndS - MIN_DRAG_SECONDS), origEndS);
+      } else {
+        commitMask(mask.id, origStartS, clampS(origEndS + deltaS, origStartS + MIN_DRAG_SECONDS, safeDuration));
       }
     });
   }
@@ -468,6 +515,59 @@ export function Timeline({
                       : "opacity-0 group-hover:opacity-100"
                   }`}
                   title="Trim zoom end"
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Mask track — same move/trim-handle drag pattern the zoom track
+         * above uses (masks are independent, possibly-overlapping ranges,
+         * not a gapless partition like slices — see `masks.ts`), just its
+         * own row and color so all three tracks stay visually distinct at
+         * a glance: amber (slices), indigo (zoom), rose/amber (masks,
+         * matching the sensitive/highlight colors `MaskEditorPanel` and
+         * the renderer's mask fill both use). */}
+        <div className="relative mt-1.5 h-9 rounded-md bg-neutral-800/60">
+          {masks.map((mask) => {
+            const leftPct = clampPct((mask.startS / safeDuration) * 100);
+            const widthPct = clampPct(((mask.endS - mask.startS) / safeDuration) * 100);
+            if (widthPct <= 0) return null;
+            const colorClass = mask.disabled
+              ? "bg-gradient-to-b from-neutral-700 to-neutral-400"
+              : mask.type === "sensitive"
+                ? "bg-gradient-to-b from-rose-800 to-rose-400"
+                : "bg-gradient-to-b from-amber-600 to-amber-300";
+            return (
+              <div
+                key={mask.id}
+                className={`group absolute top-0 flex h-full items-center justify-center overflow-hidden rounded-md text-[10px] font-medium text-white shadow-[inset_0_-3px_5px_rgba(0,0,0,0.45)] ${colorClass} ${
+                  activeDrag?.kind === "mask-move" && activeDrag?.id === mask.id ? "cursor-grabbing" : "cursor-grab"
+                }`}
+                style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                title={`${mask.type === "sensitive" ? "Sensitive data mask" : "Highlight mask"} ${formatTime(mask.startS)}–${formatTime(mask.endS)}${mask.disabled ? " (disabled)" : ""}`}
+                onPointerDown={(e) => handleMaskMove(e, mask)}
+              >
+                {widthPct > 8 ? (mask.type === "sensitive" ? "Sensitive" : "Highlight") : ""}
+                <div
+                  onPointerDown={(e) => handleMaskTrim(e, mask, "left")}
+                  onClick={(e) => e.stopPropagation()}
+                  className={`absolute inset-y-0 left-0 w-1.5 cursor-col-resize bg-white transition-opacity ${
+                    activeDrag?.kind === "mask-trim-left" && activeDrag?.id === mask.id
+                      ? "opacity-100"
+                      : "opacity-0 group-hover:opacity-100"
+                  }`}
+                  title="Trim mask start"
+                />
+                <div
+                  onPointerDown={(e) => handleMaskTrim(e, mask, "right")}
+                  onClick={(e) => e.stopPropagation()}
+                  className={`absolute inset-y-0 right-0 w-1.5 cursor-col-resize bg-white transition-opacity ${
+                    activeDrag?.kind === "mask-trim-right" && activeDrag?.id === mask.id
+                      ? "opacity-100"
+                      : "opacity-0 group-hover:opacity-100"
+                  }`}
+                  title="Trim mask end"
                 />
               </div>
             );
