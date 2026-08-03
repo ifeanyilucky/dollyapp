@@ -1,6 +1,6 @@
 import { Command, Frame, MessageSquare, MousePointer2, Share2, SquareUser, Volume2 } from "lucide-react";
 
-const WIRED_TOOLS = new Set<ToolId>(["style", "cursor"]);
+const WIRED_TOOLS = new Set<ToolId>(["style", "cursor", "animations"]);
 
 export const TOOLS = [
   { id: "style", icon: Frame, label: "Background & Screen" },
@@ -9,7 +9,7 @@ export const TOOLS = [
   { id: "comment", icon: MessageSquare, label: "Comments" },
   { id: "audio", icon: Volume2, label: "Audio" },
   { id: "shortcuts", icon: Command, label: "Shortcuts" },
-  { id: "share", icon: Share2, label: "Share" },
+  { id: "animations", icon: Share2, label: "Animations" },
 ] as const;
 
 export type ToolId = (typeof TOOLS)[number]["id"];
@@ -18,11 +18,11 @@ export type ToolId = (typeof TOOLS)[number]["id"];
  * Narrow tool rail — sits between the canvas and whichever settings panel
  * is active (see `EditorView`). Controlled from the parent (not local
  * state) since the selected tool decides *which panel renders*, not just
- * which icon is highlighted. Only "style" and "cursor" do anything —
- * clicking one of the rest is a no-op (they don't call `onSelect`, so
- * `active`/the rendered panel don't change) since there's no panel behind
- * them yet (webcam overlay, comments, audio mixing, shortcut config,
- * sharing).
+ * which icon is highlighted. Only "style", "cursor", and "animations" do
+ * anything — clicking one of the rest is a no-op (they don't call
+ * `onSelect`, so `active`/the rendered panel don't change) since there's no
+ * panel behind them yet (webcam overlay, comments, audio mixing, shortcut
+ * config).
  *
  * `active` is `null` while a timeline slice/zoom-keyframe editor is
  * showing instead of the Style/Cursor panel — none of these icons are

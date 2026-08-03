@@ -2,6 +2,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { ZoomKeyframe } from "../motion-engine";
 import { setExportDestination, writeExportFile, type LoadedRecording } from "./api";
+import type { AnimationSettings } from "./animationSettings";
 import { aspectRatioPreset, type AspectRatioId } from "./aspect";
 import type { CropRect } from "./crop";
 import type { CursorSettings } from "./cursorSettings";
@@ -25,6 +26,10 @@ export interface ExportOptions {
   style: StyleSettings;
   showCursor: boolean;
   cursorSettings: CursorSettings;
+  /** Animations panel settings — screen/cursor animation style, motion
+   * blur. See `renderer.ts`'s `SceneRendererOptions`/`draw` for how these
+   * reach `SceneRenderer`. */
+  animationSettings: AnimationSettings;
   aspectRatioId: AspectRatioId;
   /** Output resolution tier — same one the live preview canvas rendered
    * at (see `resolution.ts`); "preview and export must never diverge". */
@@ -202,6 +207,8 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
     crop: opts.crop,
     outputAspect,
     zoomKeyframes: opts.zoomKeyframes,
+    screenAnimationStyle: opts.animationSettings.screenAnimationStyle,
+    cursorAnimationStyle: opts.animationSettings.cursorAnimationStyle,
   });
 
   const { url: videoUrl, revoke: revokeVideoUrl } = await loadVideoBlobUrl(loaded.screenVideoPath);
@@ -251,6 +258,8 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
         active?.cursorOverride ?? null,
         false,
         masksActiveAt(opts.masks, tS),
+        null,
+        opts.animationSettings,
       );
     };
 

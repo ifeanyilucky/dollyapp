@@ -2,6 +2,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import { useEffect, useRef, useState } from "react";
 import { generateZoomKeyframes, splitKeyframeAt, type ZoomKeyframe } from "../motion-engine";
+import { AnimationPanel } from "./AnimationPanel";
 import { aspectRatioPreset } from "./aspect";
 import { deleteRecording, loadRecording, revealInFinder, type LoadedRecording } from "./api";
 import { playClickSound } from "./clickSound";
@@ -139,6 +140,7 @@ export function EditorView({
     slices,
     cursorSettings,
     masks,
+    animationSettings,
   } = doc;
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -164,6 +166,8 @@ export function EditorView({
   clipEndRef.current = clipEndS;
   const cursorSettingsRef = useRef(cursorSettings);
   cursorSettingsRef.current = cursorSettings;
+  const animationSettingsRef = useRef(animationSettings);
+  animationSettingsRef.current = animationSettings;
   // Read from `tick` (see the render-loop effect, keyed only on `loaded`)
   // without becoming a dependency of it — same pattern as the refs above,
   // but this one changes on every mouse-move over the timeline, so it
@@ -287,6 +291,8 @@ export function EditorView({
       crop: effectiveCrop,
       outputAspect: aspectRatioPreset(aspectRatioId).ratio ?? undefined,
       zoomKeyframes,
+      screenAnimationStyle: animationSettingsRef.current.screenAnimationStyle,
+      cursorAnimationStyle: animationSettingsRef.current.cursorAnimationStyle,
     });
     // Resumes from wherever playback currently is rather than always the
     // very start — on the very first build (mount), `videoRef.current` is
@@ -304,6 +310,22 @@ export function EditorView({
     if (!loaded) return;
     rendererRef.current?.setOutputAspect(aspectRatioPreset(aspectRatioId).ratio ?? undefined);
   }, [loaded, aspectRatioId]);
+
+  // Live "Screen animation style"/"Cursor animation style" switch (the
+  // Animations panel) — reshapes the renderer's existing spring/filter
+  // state in place rather than rebuilding it, same as the aspect-ratio
+  // effect above. `motionBlur`/the "applies to" toggles don't need an
+  // effect at all — they're plain per-frame multipliers read straight out
+  // of `animationSettingsRef` in `tick`'s `renderer.draw()` call below.
+  useEffect(() => {
+    if (!loaded) return;
+    rendererRef.current?.setScreenAnimationStyle(animationSettings.screenAnimationStyle);
+  }, [loaded, animationSettings.screenAnimationStyle]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    rendererRef.current?.setCursorAnimationStyle(animationSettings.cursorAnimationStyle);
+  }, [loaded, animationSettings.cursorAnimationStyle]);
 
   // Live zoom-keyframe edits (move/trim/split in the timeline, or the zoom
   // editor panel) — this is the fix for the preview never matching what
@@ -447,6 +469,7 @@ export function EditorView({
             (m) => !(suppressSelectedMaskRender && m.id === selectedMaskIdRef.current),
           ),
           maskEditingActive ? selectedMaskIdRef.current : null,
+          animationSettingsRef.current,
         );
         // Skip while previewing — the committed playhead (`currentTime`,
         // and the real solid-white indicator it drives in `Timeline`) must
@@ -696,6 +719,7 @@ export function EditorView({
         style,
         showCursor,
         cursorSettings,
+        animationSettings,
         aspectRatioId,
         resolution,
         crop,
@@ -1140,6 +1164,12 @@ export function EditorView({
                 onCommit={commitDoc}
                 showCursor={showCursor}
                 onToggleShowCursor={() => setDoc((d) => ({ ...d, showCursor: !d.showCursor }))}
+              />
+            ) : activeTool === "animations" ? (
+              <AnimationPanel
+                settings={animationSettings}
+                onChange={(next) => setDocTransient((d) => ({ ...d, animationSettings: next }))}
+                onCommit={commitDoc}
               />
             ) : (
               <StylePanel

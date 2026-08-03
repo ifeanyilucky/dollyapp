@@ -385,7 +385,12 @@ export class SceneRenderer {
    * editing — that one renders perfectly square (see
    * `MASK_CORNER_RADIUS_FRACTION`) so its corners line up exactly with the
    * overlay's own square corner handles; every other active mask still
-   * gets its normal rounded corners. */
+   * gets its normal rounded corners. `animationSettings`: only the
+   * `motionBlur`/`motionBlurAppliesTo*` fields are read here — the two
+   * style enums on the same object reshape stateful spring/filter machinery
+   * instead, via `setScreenAnimationStyle`/`setCursorAnimationStyle`, so
+   * they're not re-applied every frame the way these plain multipliers
+   * are. */
   draw(
     ctx: CanvasRenderingContext2D,
     video: HTMLVideoElement,
@@ -398,6 +403,7 @@ export class SceneRenderer {
     forceFullFrame = false,
     activeMasks: MaskClip[] = [],
     editingMaskId: string | null = null,
+    animationSettings: AnimationSettings = DEFAULT_ANIMATION_SETTINGS,
   ): void {
     const canvas = ctx.canvas;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -421,6 +427,13 @@ export class SceneRenderer {
     // `resetAt`), where there's nothing to compare against yet.
     const nowMs = performance.now();
     const dtMs = this.lastDrawWallClockMs !== null ? Math.max(1, nowMs - this.lastDrawWallClockMs) : null;
+    // Animations panel's "Motion blur" slider + "applies to" toggles — a
+    // plain 0-1 multiplier on top of the same speed-derived intensity
+    // `contentTrailSteps`/`cursorMotion` already compute, not a replacement
+    // for it (0 fully disables, independent of how fast the content/cursor
+    // is actually moving).
+    const screenBlurFactor = animationSettings.motionBlurAppliesToScreen ? animationSettings.motionBlur / 100 : 0;
+    const cursorBlurFactor = animationSettings.motionBlurAppliesToCursor ? animationSettings.motionBlur / 100 : 0;
     const contentTrailSteps = this.contentTrailSteps(viewport, dtMs);
     const lastViewportForTrail = this.lastViewport;
     this.lastViewport = viewport;
@@ -454,7 +467,7 @@ export class SceneRenderer {
     // *underneath* the real, fully-opaque draw below. `globalAlpha` is
     // part of the state `ctx.save()`/`ctx.restore()` already bracket here,
     // so it doesn't need manually resetting to 1 afterward.
-    if (contentTrailSteps > 0 && lastViewportForTrail) {
+    if (contentTrailSteps > 0 && lastViewportForTrail && screenBlurFactor > 0) {
       for (let i = 1; i <= contentTrailSteps; i++) {
         const t = i / (contentTrailSteps + 1);
         const echo = lerpRect(lastViewportForTrail, viewport, t);
@@ -462,7 +475,7 @@ export class SceneRenderer {
         const esy = echo.y * this.scaleFactor + this.cropOffsetPx.y;
         const esw = echo.width * this.scaleFactor;
         const esh = echo.height * this.scaleFactor;
-        ctx.globalAlpha = t * MAX_TRAIL_ALPHA;
+        ctx.globalAlpha = t * MAX_TRAIL_ALPHA * screenBlurFactor;
         ctx.drawImage(video, esx, esy, esw, esh, content.x, content.y, content.width, content.height);
       }
       ctx.globalAlpha = 1;
@@ -503,7 +516,7 @@ export class SceneRenderer {
     // the glyph itself is drawn in, so the effect scales with zoom the
     // same way the cursor's apparent speed does (a fast move reads as
     // faster, and blurrier, while zoomed in).
-    const { blurPx: cursorBlurPx, alpha: cursorAlpha } = this.cursorMotion(cx, cy, dtMs);
+    const { blurPx: cursorBlurPx, alpha: cursorAlpha } = this.cursorMotion(cx, cy, dtMs, cursorBlurFactor);
     this.lastCursorRenderPos = { x: cx, y: cy };
 
     if (cursorSettings.clickEffectEnabled) this.drawClickRipples(ctx, tUs, viewport, content);
@@ -532,14 +545,22 @@ export class SceneRenderer {
 
   /** Gaussian blur radius + opacity for the cursor glyph this frame, from
    * how far it moved (in on-screen content pixels) since the last `draw`
-   * call — see the constants at the top of this file. */
-  private cursorMotion(cx: number, cy: number, dtMs: number | null): { blurPx: number; alpha: number } {
-    if (!this.lastCursorRenderPos || dtMs === null) return { blurPx: 0, alpha: 1 };
+   * call — see the constants at the top of this file. `blurFactor` (0-1,
+   * the Animations panel's "Motion blur" slider, gated on "applies to
+   * cursor movement") scales both the blur radius and how much the fade
+   * floor is allowed to bite — 0 means a fast move stays perfectly sharp. */
+  private cursorMotion(
+    cx: number,
+    cy: number,
+    dtMs: number | null,
+    blurFactor: number,
+  ): { blurPx: number; alpha: number } {
+    if (!this.lastCursorRenderPos || dtMs === null || blurFactor <= 0) return { blurPx: 0, alpha: 1 };
     const distPx = Math.hypot(cx - this.lastCursorRenderPos.x, cy - this.lastCursorRenderPos.y);
     const speedPerMs = distPx / dtMs;
     const intensity = Math.min(1, speedPerMs * CURSOR_BLUR_SENSITIVITY);
-    const blurPx = intensity * MAX_CURSOR_BLUR_PX;
-    const alpha = Math.max(MIN_CURSOR_ALPHA, 1 - speedPerMs * CURSOR_FADE_SENSITIVITY);
+    const blurPx = intensity * MAX_CURSOR_BLUR_PX * blurFactor;
+    const alpha = Math.max(MIN_CURSOR_ALPHA, 1 - speedPerMs * CURSOR_FADE_SENSITIVITY * blurFactor);
     return { blurPx, alpha };
   }
 
