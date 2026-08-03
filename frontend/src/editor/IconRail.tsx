@@ -1,4 +1,4 @@
-import { Command, Frame, MessageSquare, MousePointer2, Share2, SquareUser, Volume2 } from "lucide-react";
+import { Command, Frame, MessageSquare, MousePointer2, Orbit, SquareUser, Volume2 } from "lucide-react";
 
 const WIRED_TOOLS = new Set<ToolId>(["style", "cursor", "animations"]);
 
@@ -9,7 +9,7 @@ export const TOOLS = [
   { id: "comment", icon: MessageSquare, label: "Comments" },
   { id: "audio", icon: Volume2, label: "Audio" },
   { id: "shortcuts", icon: Command, label: "Shortcuts" },
-  { id: "animations", icon: Share2, label: "Animations" },
+  { id: "animations", icon: Orbit, label: "Animations" },
 ] as const;
 
 export type ToolId = (typeof TOOLS)[number]["id"];
