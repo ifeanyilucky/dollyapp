@@ -12,7 +12,7 @@ import { DEFAULT_DOCUMENT, type EditorDocument } from "./document";
 import { exportVideo } from "./exportVideo";
 import { useHistoryState } from "./history";
 import { IconRail, type ToolId } from "./IconRail";
-import { SceneRenderer, shiftCursorTrack } from "./renderer";
+import { computeContentRect, SceneRenderer, shiftCursorTrack } from "./renderer";
 import { initialSlices, resizeSlices, sliceAt, splitSliceAt, type ClipSlice } from "./slices";
 import { SliceEditorPanel } from "./SliceEditorPanel";
 import { StylePanel } from "./StylePanel";
@@ -171,18 +171,18 @@ export function EditorView({
   const previewHideTimerRef = useRef<number | null>(null);
   const hoveringPreviewControlsRef = useRef(false);
   // Read from `tick` without becoming a dependency of it — same pattern as
-  // `styleRef`/etc above. `fullFrameSizeRef` is set once `loaded` (where
-  // it's computed, alongside `canvasWidth`/`canvasHeight` below) is truthy
-  // — always valid by the time `tick` actually runs, since that effect is
-  // itself gated on `loaded`.
-  const cropRef = useRef(crop);
-  cropRef.current = crop;
+  // `styleRef`/etc above; `tick` passes this straight through to
+  // `renderer.draw()`'s `forceFullFrame` (see its doc comment).
   const cropModeRef = useRef(cropMode);
   cropModeRef.current = cropMode;
-  const fullFrameSizeRef = useRef({ width: 0, height: 0 });
-  // Reused across frames instead of created per-draw — only actually
-  // rendered into while a confirmed crop is active (see `tick`).
-  const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // The recording's own point-space dimensions (independent of crop,
+  // resolution, or aspect ratio) — the coordinate space `doc.crop`/
+  // `draftCrop` live in (see `crop.ts`). Set once `loaded` (where it's
+  // computed, alongside `canvasWidth`/`canvasHeight` below) is truthy —
+  // read by the keyboard-nudge effect, which (like every `useEffect` call,
+  // per the Rules of Hooks) has to sit before this component's `!loaded`
+  // early return, where that value doesn't exist yet.
+  const sourceFrameSizeRef = useRef({ width: 0, height: 0 });
 
   useEffect(() => {
     let cancelled = false;
@@ -212,6 +212,14 @@ export function EditorView({
     };
   }, [bundlePath, patchDoc]);
 
+  // While actively re-editing a crop, the renderer needs the *un*cropped
+  // recording — `CropOverlay` draws its handles/dimming against the whole
+  // selectable area, not whatever the currently-confirmed crop already
+  // narrowed things down to (see `CropEditor.tsx`'s doc comment). Once
+  // confirmed (or if there was never a crop to begin with), this is just
+  // `crop` itself.
+  const effectiveCrop = cropMode ? null : crop;
+
   // Build the renderer once the bundle's loaded — cursor coordinates are
   // in point space, so the motion engine gets point-space frame
   // dimensions, not the video's actual pixel dimensions (ARCHITECTURE.md,
@@ -219,7 +227,12 @@ export function EditorView({
   // `zoomKeyframes` — switching/editing those later goes through
   // `renderer.setOutputAspect`/`setZoomKeyframes` instead (see the effects
   // below), so they apply in place rather than recreating the renderer
-  // and resetting playback.
+  // and resetting playback. `effectiveCrop` *is* in the dependency list,
+  // though (entering/exiting/confirming a crop is rare and deliberate, not
+  // a live drag — a full rebuild is simplest and correct here): a crop
+  // redefines what "the whole recording" even *is* for the motion engine
+  // (see `SceneRendererOptions.crop`), which isn't something `SceneRenderer`
+  // exposes a live setter for the way it does for aspect/keyframes.
   useEffect(() => {
     if (!loaded) return;
     const { widthPx, heightPx, scaleFactor, originX, originY } = loaded.meta.display;
@@ -228,12 +241,19 @@ export function EditorView({
       scaleFactor,
       cursorTrack: loaded.cursorTrack,
       origin: { x: originX, y: originY },
+      crop: effectiveCrop,
       outputAspect: aspectRatioPreset(aspectRatioId).ratio ?? undefined,
       zoomKeyframes,
     });
-    rendererRef.current.resetAt(loaded.meta.videoStartUs);
+    // Resumes from wherever playback currently is rather than always the
+    // very start — on the very first build (mount), `videoRef.current` is
+    // still null/at 0 either way, so this is a no-op difference there;
+    // it only matters for a *later* rebuild (a crop confirm/discard/entry
+    // mid-playback), where jumping back to the start would be jarring.
+    const resumeAtS = videoRef.current?.currentTime ?? 0;
+    rendererRef.current.resetAt(resumeAtS * 1_000_000 + loaded.meta.videoStartUs);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded]);
+  }, [loaded, effectiveCrop]);
 
   // Live aspect-ratio switch — reshapes the existing renderer's viewport
   // instead of rebuilding it (see the effect above).
@@ -348,65 +368,23 @@ export function EditorView({
         }
         lastSoundCheckTUsRef.current = tUs;
 
-        // A confirmed crop (and not actively re-editing it — see
-        // `cropModeRef`'s doc comment) means the visible canvas is sized
-        // *smaller* than the full composed frame (`canvasWidth`/
-        // `canvasHeight` below already reflect this). `renderer.draw()`
-        // itself is completely unaware of cropping — it always composites
-        // the *full* frame — so the full frame gets rendered onto a reused
-        // offscreen canvas first, and only the crop sub-rect of that gets
-        // blitted onto the actually-visible canvas. Skipped entirely
-        // (rendering straight to `ctx` as before) whenever there's nothing
-        // to crop, so the common case pays zero extra cost.
-        const activeCrop = cropRef.current;
-        const full = fullFrameSizeRef.current;
-        if (!cropModeRef.current && activeCrop && !isFullFrameCrop(activeCrop, full.width, full.height)) {
-          let offscreen = offscreenCanvasRef.current;
-          if (!offscreen) {
-            offscreen = document.createElement("canvas");
-            offscreenCanvasRef.current = offscreen;
-          }
-          if (offscreen.width !== full.width || offscreen.height !== full.height) {
-            offscreen.width = full.width;
-            offscreen.height = full.height;
-          }
-          const offscreenCtx = offscreen.getContext("2d");
-          if (offscreenCtx) {
-            renderer.draw(
-              offscreenCtx,
-              video,
-              tUs,
-              styleRef.current,
-              showCursorRef.current,
-              cursorSettingsRef.current,
-              clipEndTUs,
-              activeSlice?.cursorOverride ?? null,
-            );
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(
-              offscreen,
-              activeCrop.x,
-              activeCrop.y,
-              activeCrop.width,
-              activeCrop.height,
-              0,
-              0,
-              canvas.width,
-              canvas.height,
-            );
-          }
-        } else {
-          renderer.draw(
-            ctx,
-            video,
-            tUs,
-            styleRef.current,
-            showCursorRef.current,
-            cursorSettingsRef.current,
-            clipEndTUs,
-            activeSlice?.cursorOverride ?? null,
-          );
-        }
+        // `cropModeRef.current` as `forceFullFrame`: crop mode wants to
+        // show the entire selectable area (see `CropOverlay`), not
+        // whatever a zoom keyframe currently has things reframed to. Any
+        // *confirmed* crop is already baked into `renderer` itself (its
+        // effective frame — see `effectiveCrop`/the renderer-construction
+        // effect above), so nothing else here needs to know about it.
+        renderer.draw(
+          ctx,
+          video,
+          tUs,
+          styleRef.current,
+          showCursorRef.current,
+          cursorSettingsRef.current,
+          clipEndTUs,
+          activeSlice?.cursorOverride ?? null,
+          cropModeRef.current,
+        );
         // Skip while previewing — the committed playhead (`currentTime`,
         // and the real solid-white indicator it drives in `Timeline`) must
         // not move just because the mouse is hovering somewhere.
@@ -454,10 +432,10 @@ export function EditorView({
   // `Keyboard` icon in `CropToolbar`) — 1px per press, 10px with Shift.
   // Ignored while a number input has focus, so the Size/Position fields'
   // own native up/down arrow behavior isn't fought over. Reads
-  // `fullFrameSizeRef` (not the `fullFrameSize` const computed further
-  // down, after this component's `!loaded` early return) since this effect
-  // — like every other `useEffect` call, per the Rules of Hooks — has to
-  // sit before any conditional return, where that value doesn't exist yet.
+  // `sourceFrameSizeRef` (not a plain const computed further down, after
+  // this component's `!loaded` early return) since this effect — like
+  // every other `useEffect` call, per the Rules of Hooks — has to sit
+  // before any conditional return, where that value doesn't exist yet.
   useEffect(() => {
     if (!cropMode || !draftCrop) return;
     function onKeyDown(e: KeyboardEvent) {
@@ -473,8 +451,10 @@ export function EditorView({
       else if (e.key === "ArrowDown") dy = step;
       else return;
       e.preventDefault();
-      const full = fullFrameSizeRef.current;
-      setDraftCrop(clampCropRect({ ...draftCrop, x: draftCrop.x + dx, y: draftCrop.y + dy }, full.width, full.height));
+      const source = sourceFrameSizeRef.current;
+      setDraftCrop(
+        clampCropRect({ ...draftCrop, x: draftCrop.x + dx, y: draftCrop.y + dy }, source.width, source.height),
+      );
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -756,18 +736,19 @@ export function EditorView({
     );
   }
 
+  // The recording's own point-space dimensions — same units as
+  // `frame`/`origin` passed to `SceneRenderer`, and what `doc.crop`/
+  // `draftCrop` coordinates are in (see `crop.ts`). Independent of crop,
+  // resolution, or aspect ratio: it's the fixed space crop *selects
+  // within*, not the (crop-affected) output.
+  const sourceFrameSize = {
+    width: loaded.meta.display.widthPx / loaded.meta.display.scaleFactor,
+    height: loaded.meta.display.heightPx / loaded.meta.display.scaleFactor,
+  };
+  sourceFrameSizeRef.current = sourceFrameSize;
+
   const sourceAspect = loaded.meta.display.widthPx / loaded.meta.display.heightPx;
   const outputAspect = aspectRatioPreset(aspectRatioId).ratio ?? sourceAspect;
-  // The full composed frame's own pixel size — aspect + resolution tier,
-  // *before* any crop. This is the space `doc.crop`'s coordinates live in
-  // (see `crop.ts`) and what the offscreen canvas in `tick` renders onto.
-  const fullFrameSize = computeOutputSize(
-    resolutionPreset(resolution).longEdge,
-    loaded.meta.display.widthPx,
-    loaded.meta.display.heightPx,
-    outputAspect,
-  );
-  fullFrameSizeRef.current = fullFrameSize;
   // The canvas element's `width`/`height` *attributes* (as opposed to its
   // CSS size, set separately below) are its actual render resolution — the
   // same computation `exportVideo` uses, so what the preview renders at is
@@ -776,19 +757,31 @@ export function EditorView({
   // CSS `max-h-full max-w-full` below then scales that pixel buffer down
   // to fit whatever on-screen space is actually available, exactly like an
   // `<img>` would — the browser downsamples for display without touching
-  // the underlying render resolution.
-  //
-  // Shrinks to the confirmed crop's own size once one exists — *except*
-  // while actively re-editing it (`cropMode`), when the canvas keeps
-  // showing the full, uncropped frame so `CropEditor` has context to drag
-  // handles against (see its own doc comment).
-  const { width: canvasWidth, height: canvasHeight } = !cropMode && crop ? crop : fullFrameSize;
+  // the underlying render resolution. Entirely unaffected by crop: crop
+  // changes what the renderer treats as "the recording" (see the
+  // `effectiveCrop`-keyed effect above), not the output frame's own size
+  // — that's still purely `resolution`/`aspectRatioId`, same as before
+  // crop existed.
+  const { width: canvasWidth, height: canvasHeight } = computeOutputSize(
+    resolutionPreset(resolution).longEdge,
+    loaded.meta.display.widthPx,
+    loaded.meta.display.heightPx,
+    outputAspect,
+  );
+  // Where the video is actually drawn within the canvas (padding/aspect
+  // aside) — `CropOverlay` needs this (not just the canvas's own on-screen
+  // box) to position handles against the right spot, since crop mode's
+  // `forceFullFrame` render still goes through the normal
+  // background/padding/shadow pipeline. Must match `SceneRenderer`'s own
+  // `contentRect` exactly — see `computeContentRect`'s doc comment for why
+  // it's a shared export rather than a second copy of the formula.
+  const cropContentRect = computeContentRect(canvasWidth, canvasHeight, style.padding, outputAspect);
 
   /** The top bar's "Crop" button — seeds the draft from the already-
-   * confirmed crop if there is one (re-editing), or the full frame if not
-   * (first crop). */
+   * confirmed crop if there is one (re-editing), or the full recording if
+   * not (first crop). */
   function enterCropMode() {
-    setDraftCrop(crop ?? fullFrameCrop(fullFrameSize.width, fullFrameSize.height));
+    setDraftCrop(crop ?? fullFrameCrop(sourceFrameSize.width, sourceFrameSize.height));
     setCropMode(true);
   }
 
@@ -796,7 +789,7 @@ export function EditorView({
    * other document change), then back to the normal view. */
   function confirmCrop() {
     if (draftCrop) {
-      const next = isFullFrameCrop(draftCrop, fullFrameSize.width, fullFrameSize.height) ? null : draftCrop;
+      const next = isFullFrameCrop(draftCrop, sourceFrameSize.width, sourceFrameSize.height) ? null : draftCrop;
       setDoc((d) => ({ ...d, crop: next }));
     }
     setCropMode(false);
@@ -820,8 +813,8 @@ export function EditorView({
         <CropToolbar
           draftCrop={draftCrop}
           onChangeDraft={setDraftCrop}
-          fullFrameWidth={fullFrameSize.width}
-          fullFrameHeight={fullFrameSize.height}
+          sourceFrameWidth={sourceFrameSize.width}
+          sourceFrameHeight={sourceFrameSize.height}
         />
       )}
       <TopBar
@@ -876,8 +869,11 @@ export function EditorView({
             <CropOverlay
               draftCrop={draftCrop}
               onChangeDraft={setDraftCrop}
-              fullFrameWidth={fullFrameSize.width}
-              fullFrameHeight={fullFrameSize.height}
+              sourceFrameWidth={sourceFrameSize.width}
+              sourceFrameHeight={sourceFrameSize.height}
+              contentRect={cropContentRect}
+              canvasPxWidth={canvasWidth}
+              canvasPxHeight={canvasHeight}
               canvasRef={canvasRef}
             />
           )}

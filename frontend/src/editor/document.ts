@@ -20,9 +20,10 @@ export interface EditorDocument {
   /** Output resolution tier (also what the live preview canvas renders at
    * — see `resolution.ts`'s `computeOutputSize`). */
   resolution: ResolutionId;
-  /** A sub-rectangle of the fully composed frame to keep — `null` means no
-   * crop (the full frame, today's behavior unchanged). See `crop.ts`'s
-   * doc comment for the coordinate space this lives in. */
+  /** A sub-window of the *recorded* content to treat as the entire
+   * recording — `null` means uncropped (today's pre-crop behavior
+   * unchanged). See `crop.ts`'s doc comment for the coordinate space this
+   * lives in. */
   crop: CropRect | null;
   zoomKeyframes: ZoomKeyframe[];
   /** Effective in/out of the whole clip (video-relative seconds) — both 0

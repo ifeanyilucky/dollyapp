@@ -1,13 +1,17 @@
 /**
- * A rectangular sub-region, in the *full composed frame*'s own pixel space
- * (the same canvas `SceneRenderer.draw()` already renders onto today —
- * background, content, cursor overlay, everything) — not source-video
- * pixels, and not touching the zoom/pan viewport at all. Cropping selects
- * what to keep of the *finished* frame, the same way an image editor's
- * crop tool works on a flattened image; see `EditorView`'s dual-canvas
- * render path (`renderer.draw()` is completely unchanged, still composing
- * the full frame — the crop is a second, separate step that blits a
- * sub-rect of that onto the actually-displayed/exported canvas).
+ * A rectangular sub-region of the *recorded* frame — point space, the same
+ * units as `RecordingMeta.display` scale-factor-adjusted (i.e. the `frame`
+ * `SceneRenderer`'s constructor takes), *not* the composited canvas's own
+ * pixel space and *not* touching background/padding/style at all. "Show
+ * only the recorded area" is the whole point: cropping redefines what the
+ * rest of the app (zoom/pan bounds, cursor positions, the aspect
+ * `contentRect` falls back to) treats as "the entire recording", the same
+ * way a window/area capture's own `origin` already does — see
+ * `SceneRendererOptions.crop`'s doc comment for exactly how the two
+ * compose. Background/padding/shadow styling still applies *around* the
+ * cropped content afterward, same as it always did — crop only narrows
+ * what's actually recorded-content, not the output frame's own shape
+ * (that's still `aspectRatioId`/`resolution`, unaffected by this).
  */
 export interface CropRect {
   x: number;
@@ -16,8 +20,9 @@ export interface CropRect {
   height: number;
 }
 
-/** The "no crop" rect — the entire frame, origin at the top-left. Used as
- * the starting draft when entering crop mode with no crop confirmed yet. */
+/** The "no crop" rect — the entire recording, origin at the top-left. Used
+ * as the starting draft when entering crop mode with no crop confirmed
+ * yet. */
 export function fullFrameCrop(frameWidth: number, frameHeight: number): CropRect {
   return { x: 0, y: 0, width: frameWidth, height: frameHeight };
 }
@@ -41,16 +46,18 @@ export function clampCropRect(rect: CropRect, frameWidth: number, frameHeight: n
 }
 
 /** Whether `crop` is effectively "no crop" for `frameWidth`/`frameHeight`
- * — lets callers skip the dual-canvas blit path entirely rather than
- * doing a full-frame-sized no-op crop every frame. */
+ * — `EditorView`'s `confirmCrop` uses this to store `null` (rather than a
+ * redundant full-frame rect) in `doc.crop` whenever the confirmed draft
+ * doesn't actually narrow anything down, keeping "is this recording
+ * cropped at all" a simple null check everywhere else. */
 export function isFullFrameCrop(crop: CropRect, frameWidth: number, frameHeight: number): boolean {
   return crop.x === 0 && crop.y === 0 && crop.width === frameWidth && crop.height === frameHeight;
 }
 
-/** Largest same-`aspect` rect centered within the full frame — backs
+/** Largest same-`aspect` rect centered within the recording — backs
  * `CropEditor`'s "Select..." preset dropdown (reuses `ASPECT_RATIO_PRESETS`
  * rather than inventing a second, parallel preset list). `aspect === null`
- * ("Original") is the full frame itself. */
+ * ("Original") is the whole recording, uncropped. */
 export function centeredCropForAspect(frameWidth: number, frameHeight: number, aspect: number | null): CropRect {
   if (aspect === null) return fullFrameCrop(frameWidth, frameHeight);
   let width = frameWidth;

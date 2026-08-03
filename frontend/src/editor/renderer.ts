@@ -6,6 +6,7 @@ import {
   type ZoomKeyframe,
 } from "../motion-engine";
 import { cursorSizeMultiplier, DEFAULT_CURSOR_SETTINGS, type CursorSettings, type CursorStyleId } from "./cursorSettings";
+import type { CropRect } from "./crop";
 import type { SliceCursorOverride } from "./slices";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
 import { GRADIENT_PRESETS, paintCanvasGradient, WALLPAPER_IMAGES } from "./wallpapers";
@@ -51,11 +52,36 @@ const LOOP_BLEND_DURATION_US = 1_200_000;
 const IDLE_WINDOW_US = 500_000;
 const IDLE_THRESHOLD_PX = 3;
 
-interface Rect {
+export interface Rect {
   x: number;
   y: number;
   width: number;
   height: number;
+}
+
+/**
+ * Video content rect, centered in the canvas and inset by `padding` on all
+ * sides while preserving the drawn region's own aspect ratio (padding
+ * shrinks the video, it doesn't stretch it) — `aspect` is `outputAspect`
+ * when set (the viewport is reframed to match it, see `viewportForKeyframe`)
+ * or the source recording's own otherwise. Exported (not just a private
+ * `SceneRenderer` method) so `CropEditor`'s on-canvas overlay can map its
+ * handles onto exactly where the video is actually drawn — including
+ * padding — using the *same* formula, rather than a second copy of it that
+ * could drift out of sync.
+ */
+export function computeContentRect(canvasWidth: number, canvasHeight: number, padding: number, aspect: number): Rect {
+  const availWidth = Math.max(canvasWidth - padding * 2, 1);
+  const availHeight = Math.max(canvasHeight - padding * 2, 1);
+
+  let width = availWidth;
+  let height = width / aspect;
+  if (height > availHeight) {
+    height = availHeight;
+    width = height * aspect;
+  }
+
+  return { x: (canvasWidth - width) / 2, y: (canvasHeight - height) / 2, width, height };
 }
 
 export interface SceneRendererOptions {
@@ -71,6 +97,18 @@ export interface SceneRendererOptions {
    * sample/event position up front so the rest of this class can treat
    * `cursorTrack` as already being in video-local space. */
   origin?: { x: number; y: number };
+  /** A confirmed crop (see `crop.ts`) — a sub-window of *this* recording
+   * (point space, same units as `frame`/`cursorTrack`) that the rest of
+   * the renderer then treats as if it were the *entire* recording: zoom/
+   * pan bounds, the source aspect `contentRect` falls back to, and every
+   * cursor position are all re-anchored to it, the same way `origin`
+   * already re-anchors a window/area recording. The one thing crop does
+   * that `origin` doesn't: the underlying `screen.mov` file itself was
+   * *not* re-encoded to match (unlike a window/area recording, whose
+   * capture-time crop really did produce a smaller file) — so sampling
+   * from the video still needs the extra offset `cropOffsetPx` (below)
+   * applies at draw time. `undefined`/`null` means no crop. */
+  crop?: CropRect | null;
   /** Width/height of the desired output framing — see
    * `viewportForKeyframe`'s doc comment. `undefined` keeps the source
    * recording's own aspect. */
@@ -120,12 +158,28 @@ export class SceneRenderer {
   private rawSamples: CursorSample[];
   private events: CursorEvent[];
   private scaleFactor: number;
+  /** The source aspect `contentRect` falls back to when `outputAspect`
+   * isn't set — the *crop's* aspect once one is confirmed (see
+   * `SceneRendererOptions.crop`), the raw recording's otherwise. */
   private videoAspect: number;
   /** Mirrors `SceneRendererOptions.outputAspect` — kept in sync with the
    * motion engine's own copy (see `setOutputAspect`) since `contentRect`
    * needs it too: the drawn region now has *this* aspect (the viewport's),
    * not the source video's, whenever it's set. */
   private outputAspect: number | undefined;
+  /** The point-space frame size zoom/pan treats as "the whole recording"
+   * — the crop's own size once one is confirmed, the raw recording's
+   * otherwise (see `SceneRendererOptions.crop`). Used for the static
+   * full-frame viewport `draw`'s `forceFullFrame` substitutes for the
+   * motion engine's own (crop mode wants to show the *entire* selectable
+   * area, not whatever a zoom keyframe happens to be reframed to at the
+   * current time). */
+  private effectiveFrame: FrameSize;
+  /** Device-pixel offset added to every source-sample coordinate in
+   * `draw` — see `SceneRendererOptions.crop`'s doc comment on why this
+   * exists (the underlying video file itself was never re-encoded to
+   * match the crop, unlike `origin`). Zero when there's no crop. */
+  private cropOffsetPx: { x: number; y: number };
   // `shadowBlur` is one of the more expensive things Canvas2D can do —
   // recomputing a full-size blurred rect every frame was enough to make
   // rendering janky, which fed directly into spring instability (a slow
@@ -155,14 +209,28 @@ export class SceneRenderer {
 
   constructor(opts: SceneRendererOptions) {
     this.scaleFactor = opts.scaleFactor;
-    this.videoAspect = opts.frame.width / opts.frame.height;
     this.outputAspect = opts.outputAspect;
-    const cursorTrack = shiftCursorTrack(opts.cursorTrack, opts.origin ?? { x: 0, y: 0 });
+
+    const crop = opts.crop ?? null;
+    const origin = opts.origin ?? { x: 0, y: 0 };
+    // See `SceneRendererOptions.crop`'s doc comment: a confirmed crop
+    // redefines "the whole recording" for everything downstream, the same
+    // way `origin` already does for a window/area capture — composed with
+    // it (added, not replaced), since both can be true of the same
+    // recording at once (a cropped window recording, say).
+    this.effectiveFrame = crop ? { width: crop.width, height: crop.height } : opts.frame;
+    const effectiveOrigin = crop ? { x: origin.x + crop.x, y: origin.y + crop.y } : origin;
+    this.cropOffsetPx = crop
+      ? { x: crop.x * this.scaleFactor, y: crop.y * this.scaleFactor }
+      : { x: 0, y: 0 };
+    this.videoAspect = this.effectiveFrame.width / this.effectiveFrame.height;
+
+    const cursorTrack = shiftCursorTrack(opts.cursorTrack, effectiveOrigin);
     // Built directly from the caller's keyframes rather than
     // `createMotionEngine` (which would generate its own, independent
     // copy from the cursor track) — see `SceneRendererOptions.zoomKeyframes`'s
     // doc comment for why there must only ever be one array of these.
-    this.motionEngine = new MotionEngine(opts.frame, opts.zoomKeyframes, opts.outputAspect);
+    this.motionEngine = new MotionEngine(this.effectiveFrame, opts.zoomKeyframes, opts.outputAspect);
     this.smoothedSamples = smoothCursorTrack(cursorTrack.samples);
     this.rawSamples = cursorTrack.samples;
     this.events = cursorTrack.events;
@@ -200,7 +268,15 @@ export class SceneRenderer {
    * raw length) — used only for `cursorSettings.loopCursorPosition`.
    * `sliceCursorOverride`: the slice active at `tUs`'s own cursor override
    * (see `slices.ts`), if any — layers on top of `cursorSettings` for just
-   * that slice's time range, rather than replacing it. */
+   * that slice's time range, rather than replacing it. `forceFullFrame`:
+   * crop mode's overlay needs to see the *entire* selectable area to draw
+   * handles/dimming against, not whatever a zoom keyframe happens to be
+   * reframed to right now — bypasses the motion engine's own viewport
+   * entirely for a static, unzoomed, centered one instead (see
+   * `EditorView`'s `cropMode`). The motion engine's spring state is simply
+   * not advanced while this is true — resumes, with a brief catch-up
+   * animation bounded by its own `transformAt` clamp, once it's false
+   * again. */
   draw(
     ctx: CanvasRenderingContext2D,
     video: HTMLVideoElement,
@@ -210,6 +286,7 @@ export class SceneRenderer {
     cursorSettings: CursorSettings = DEFAULT_CURSOR_SETTINGS,
     clipEndTUs = 0,
     sliceCursorOverride: SliceCursorOverride | null = null,
+    forceFullFrame = false,
   ): void {
     const canvas = ctx.canvas;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -222,7 +299,9 @@ export class SceneRenderer {
     // Live cursor position drives pan while a zoom is active (see
     // ARCHITECTURE.md, "Pan follows the live cursor") — computed before
     // `transformAt` so it can be passed straight in.
-    const { viewport } = this.motionEngine.transformAt(tUs, cursor ?? undefined);
+    const viewport = forceFullFrame
+      ? { x: 0, y: 0, width: this.effectiveFrame.width, height: this.effectiveFrame.height }
+      : this.motionEngine.transformAt(tUs, cursor ?? undefined).viewport;
 
     // Real (wall-clock, not video) elapsed time since the last `draw` —
     // the basis for both blur estimates below, so their intensity tracks
@@ -237,8 +316,13 @@ export class SceneRenderer {
 
     // `viewport` is in point space; the video's actual pixels are at
     // `scaleFactor`x that (ARCHITECTURE.md, "Recording format").
-    const sx = viewport.x * this.scaleFactor;
-    const sy = viewport.y * this.scaleFactor;
+    // `+ this.cropOffsetPx`: `viewport` is relative to the *effective*
+    // frame's own origin (0,0 = the crop's top-left, once one exists) —
+    // the underlying video file's pixels are not, so sampling from it
+    // needs the crop's offset added back in (see `cropOffsetPx`'s doc
+    // comment). Zero, a no-op, whenever there's no crop.
+    const sx = viewport.x * this.scaleFactor + this.cropOffsetPx.x;
+    const sy = viewport.y * this.scaleFactor + this.cropOffsetPx.y;
     const sw = viewport.width * this.scaleFactor;
     const sh = viewport.height * this.scaleFactor;
 
@@ -326,24 +410,13 @@ export class SceneRenderer {
     return { blurPx, alpha };
   }
 
-  /** Video content rect, centered in the canvas and inset by `padding` on
-   * all sides while preserving the drawn region's own aspect ratio
-   * (padding shrinks the video, it doesn't stretch it) — that's
-   * `outputAspect` when set, since the viewport is reframed to match it
-   * (see `viewportForKeyframe`), not the source recording's own aspect. */
+  /** `outputAspect` when set (the viewport is reframed to match it, see
+   * `viewportForKeyframe`), the source recording's own — or the crop's,
+   * once one is confirmed; see `videoAspect`'s doc comment — otherwise.
+   * See `computeContentRect` (the module-level export this delegates to)
+   * for the actual geometry. */
   private contentRect(canvasWidth: number, canvasHeight: number, padding: number): Rect {
-    const aspect = this.outputAspect ?? this.videoAspect;
-    const availWidth = Math.max(canvasWidth - padding * 2, 1);
-    const availHeight = Math.max(canvasHeight - padding * 2, 1);
-
-    let width = availWidth;
-    let height = width / aspect;
-    if (height > availHeight) {
-      height = availHeight;
-      width = height * aspect;
-    }
-
-    return { x: (canvasWidth - width) / 2, y: (canvasHeight - height) / 2, width, height };
+    return computeContentRect(canvasWidth, canvasHeight, padding, this.outputAspect ?? this.videoAspect);
   }
 
   /** Resolves the photo URL backing "wallpaper" (bundled presets) or

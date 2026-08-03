@@ -20,8 +20,11 @@ import { centeredCropForAspect, clampCropRect, fullFrameCrop, type CropRect } fr
 interface CropEditorSharedProps {
   draftCrop: CropRect;
   onChangeDraft: (next: CropRect) => void;
-  fullFrameWidth: number;
-  fullFrameHeight: number;
+  /** The recording's own point-space dimensions (see `crop.ts`) — the
+   * bounds `draftCrop` is clamped within, independent of the output
+   * canvas's own (resolution/aspect-driven) pixel size. */
+  sourceFrameWidth: number;
+  sourceFrameHeight: number;
 }
 
 function numberInputClass() {
@@ -38,9 +41,9 @@ function parseIntOr(value: string, fallback: number): number {
 
 /** The Size/Position/Select/Reset row — rendered above the normal top bar
  * while `cropMode` is active. */
-export function CropToolbar({ draftCrop, onChangeDraft, fullFrameWidth, fullFrameHeight }: CropEditorSharedProps) {
+export function CropToolbar({ draftCrop, onChangeDraft, sourceFrameWidth, sourceFrameHeight }: CropEditorSharedProps) {
   function set(patch: Partial<CropRect>) {
-    onChangeDraft(clampCropRect({ ...draftCrop, ...patch }, fullFrameWidth, fullFrameHeight));
+    onChangeDraft(clampCropRect({ ...draftCrop, ...patch }, sourceFrameWidth, sourceFrameHeight));
   }
 
   return (
@@ -83,7 +86,7 @@ export function CropToolbar({ draftCrop, onChangeDraft, fullFrameWidth, fullFram
               <DropdownMenu.Item
                 key={p.id}
                 className="crop-preset-item"
-                onSelect={() => onChangeDraft(centeredCropForAspect(fullFrameWidth, fullFrameHeight, p.ratio))}
+                onSelect={() => onChangeDraft(centeredCropForAspect(sourceFrameWidth, sourceFrameHeight, p.ratio))}
               >
                 {p.label}
               </DropdownMenu.Item>
@@ -110,7 +113,7 @@ export function CropToolbar({ draftCrop, onChangeDraft, fullFrameWidth, fullFram
 
       <button
         type="button"
-        onClick={() => onChangeDraft(fullFrameCrop(fullFrameWidth, fullFrameHeight))}
+        onClick={() => onChangeDraft(fullFrameCrop(sourceFrameWidth, sourceFrameHeight))}
         className="ml-3 flex items-center gap-1.5 rounded-md border border-neutral-800 px-2.5 py-1.5 text-[12px] text-neutral-300 hover:border-neutral-700 hover:bg-neutral-900"
       >
         <CropIcon className="h-3.5 w-3.5" />
@@ -173,25 +176,43 @@ const HANDLE_POSITIONS: { kind: HandleKind; className: string; cursor: string }[
  * rule-of-thirds grid and 8 drag handles inside it. Rendered as an
  * absolutely-positioned sibling of the `<canvas>` element (see
  * `EditorView`, which makes the canvas's wrapper `relative` for exactly
- * this), sized/positioned to match the canvas's actual on-screen box —
- * tracked live via `ResizeObserver` since that box changes with the
- * window, the sidebar, and preview-mode toggling, none of which this
- * component hears about directly.
+ * this), sized/positioned to match not the canvas's own on-screen box but
+ * specifically the *video content*'s box within it (`contentRect`, in
+ * canvas-pixel space — padding around it isn't part of the recording, so
+ * there's nothing to crop-select there) — tracked live via
+ * `ResizeObserver` since that box changes with the window, the sidebar,
+ * and preview-mode toggling, none of which this component hears about
+ * directly.
  *
- * All drag math happens in *canvas-pixel* space (the same space
+ * All drag math happens in *source-point* space (the same space
  * `draftCrop` itself is in — see `crop.ts`), converting from on-screen CSS
- * pixels via the box's measured scale — the canvas is rendered at full
- * crop-independent resolution and downscaled by CSS to fit on screen (see
- * `EditorView`'s canvas sizing), so 1 CSS px almost never equals 1 canvas
- * px.
+ * pixels via the measured content box's scale (canvas-pixel -> CSS, via
+ * `canvasPxWidth`/`canvasPxHeight` vs. the box's own measured size, then
+ * source-point -> canvas-pixel, via `contentRect` vs.
+ * `sourceFrameWidth`/`sourceFrameHeight`) — composed into one factor so
+ * call sites don't need to care that two different unit conversions are
+ * actually happening.
  */
 export function CropOverlay({
   draftCrop,
   onChangeDraft,
-  fullFrameWidth,
-  fullFrameHeight,
+  sourceFrameWidth,
+  sourceFrameHeight,
+  contentRect,
+  canvasPxWidth,
+  canvasPxHeight,
   canvasRef,
-}: CropEditorSharedProps & { canvasRef: RefObject<HTMLCanvasElement | null> }) {
+}: CropEditorSharedProps & {
+  /** Where the video is actually drawn within the canvas — same units as
+   * `canvasPxWidth`/`canvasPxHeight` (canvas-pixel space, not CSS or
+   * source-point space) — see `renderer.ts`'s `computeContentRect`, which
+   * `EditorView` calls with the exact same inputs `SceneRenderer` itself
+   * uses, so this can never drift from where the video is really drawn. */
+  contentRect: { x: number; y: number; width: number; height: number };
+  canvasPxWidth: number;
+  canvasPxHeight: number;
+  canvasRef: RefObject<HTMLCanvasElement | null>;
+}) {
   const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
 
   useEffect(() => {
@@ -204,11 +225,18 @@ export function CropOverlay({
       if (!c || !parent) return;
       const canvasRect = c.getBoundingClientRect();
       const parentRect = parent.getBoundingClientRect();
+      const canvasLeft = canvasRect.left - parentRect.left;
+      const canvasTop = canvasRect.top - parentRect.top;
+      // Canvas-pixel -> CSS-pixel scale, then apply it to `contentRect` to
+      // get the *content* box's on-screen position/size specifically,
+      // rather than the whole (possibly padded) canvas's.
+      const cssPerPxX = canvasRect.width / canvasPxWidth;
+      const cssPerPxY = canvasRect.height / canvasPxHeight;
       setBox({
-        left: canvasRect.left - parentRect.left,
-        top: canvasRect.top - parentRect.top,
-        width: canvasRect.width,
-        height: canvasRect.height,
+        left: canvasLeft + contentRect.x * cssPerPxX,
+        top: canvasTop + contentRect.y * cssPerPxY,
+        width: contentRect.width * cssPerPxX,
+        height: contentRect.height * cssPerPxY,
       });
     }
 
@@ -220,12 +248,17 @@ export function CropOverlay({
       observer.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [canvasRef]);
+    // Primitive fields rather than the `contentRect` object itself, which
+    // is a fresh literal every `EditorView` render (including every
+    // pointermove while dragging a handle) — depending on the object
+    // would tear this `ResizeObserver` down and rebuild it that often.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasRef, contentRect.x, contentRect.y, contentRect.width, contentRect.height, canvasPxWidth, canvasPxHeight]);
 
   if (!box) return null;
 
-  const scaleX = box.width / fullFrameWidth;
-  const scaleY = box.height / fullFrameHeight;
+  const scaleX = box.width / sourceFrameWidth;
+  const scaleY = box.height / sourceFrameHeight;
   const cropLeft = draftCrop.x * scaleX;
   const cropTop = draftCrop.y * scaleY;
   const cropWidth = draftCrop.width * scaleX;
@@ -244,7 +277,7 @@ export function CropOverlay({
     const handleMove = (ev: PointerEvent) => {
       const dx = (ev.clientX - startClientX) / scaleX;
       const dy = (ev.clientY - startClientY) / scaleY;
-      onChangeDraft(clampCropRect(applyHandleDelta(kind, start, dx, dy), fullFrameWidth, fullFrameHeight));
+      onChangeDraft(clampCropRect(applyHandleDelta(kind, start, dx, dy), sourceFrameWidth, sourceFrameHeight));
     };
     const handleEnd = () => {
       target.removeEventListener("pointermove", handleMove);

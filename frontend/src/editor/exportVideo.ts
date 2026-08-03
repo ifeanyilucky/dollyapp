@@ -3,7 +3,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import type { ZoomKeyframe } from "../motion-engine";
 import { setExportDestination, writeExportFile, type LoadedRecording } from "./api";
 import { aspectRatioPreset, type AspectRatioId } from "./aspect";
-import { isFullFrameCrop, type CropRect } from "./crop";
+import type { CropRect } from "./crop";
 import type { CursorSettings } from "./cursorSettings";
 import { SceneRenderer } from "./renderer";
 import { computeOutputSize, resolutionPreset, type ResolutionId } from "./resolution";
@@ -27,9 +27,9 @@ export interface ExportOptions {
   /** Output resolution tier — same one the live preview canvas rendered
    * at (see `resolution.ts`); "preview and export must never diverge". */
   resolution: ResolutionId;
-  /** Confirmed crop, if any — same rect (full-composed-frame pixel space,
-   * see `crop.ts`) the live preview canvas cropped to. `null`/full-frame
-   * means the export is the whole composed frame, same as before crop
+  /** Confirmed crop, if any — a sub-window of the *recording* (source
+   * point space, see `crop.ts`), same as what the live preview used.
+   * `null` means the export is the entire recording, same as before crop
    * existed. */
   crop: CropRect | null;
   /** Called roughly once per exported frame with (seconds done, total
@@ -153,23 +153,18 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
   // comment) — the exact same computation the live preview canvas used,
   // so the export is what the preview showed, not a separate guess. The
   // canvas matches the *output* aspect (not the source's) so the
-  // background fills the whole frame, exactly like the preview.
+  // background fills the whole frame, exactly like the preview. Entirely
+  // unaffected by crop — crop changes what `SceneRenderer` treats as "the
+  // recording" (passed into its constructor below), not this output
+  // frame's own size, same as the live preview.
   const sourceAspect = display.widthPx / display.heightPx;
   const outputAspect = aspectRatioPreset(opts.aspectRatioId).ratio ?? sourceAspect;
-  const fullFrameSize = computeOutputSize(
+  const { width, height } = computeOutputSize(
     resolutionPreset(opts.resolution).longEdge,
     display.widthPx,
     display.heightPx,
     outputAspect,
   );
-  // A confirmed crop (see `crop.ts`) means the *encoded* frame is smaller
-  // than the full composed one — `null` here for "nothing to crop" covers
-  // both "no crop set" and a crop that happens to already cover the whole
-  // frame, so the dual-canvas path below only ever runs when it needs to.
-  const crop =
-    opts.crop && !isFullFrameCrop(opts.crop, fullFrameSize.width, fullFrameSize.height) ? opts.crop : null;
-  const width = crop?.width ?? fullFrameSize.width;
-  const height = crop?.height ?? fullFrameSize.height;
   if (width < 2 || height < 2) {
     throw new Error("The export frame would be too small to encode.");
   }
@@ -184,13 +179,6 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
   if (!dest) return null;
   await setExportDestination(dest);
 
-  // `canvas` is the one actually captured/encoded — sized to the crop (if
-  // any) rather than the full frame. `renderer.draw()` itself has no idea
-  // cropping exists; it always composites the *full* frame, so when
-  // cropping, that full composite is rendered onto a separate offscreen
-  // canvas first and only the crop sub-rect gets blitted onto `canvas`
-  // each frame (see `drawAt` below) — same split the live preview canvas
-  // uses, for the same reason (preview and export must never diverge).
   canvas.width = width;
   canvas.height = height;
   canvas.style.position = "fixed";
@@ -203,21 +191,12 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Couldn't get a 2D context for the export canvas.");
 
-  let fullCanvas: HTMLCanvasElement | null = null;
-  let fullCtx: CanvasRenderingContext2D | null = null;
-  if (crop) {
-    fullCanvas = document.createElement("canvas");
-    fullCanvas.width = fullFrameSize.width;
-    fullCanvas.height = fullFrameSize.height;
-    fullCtx = fullCanvas.getContext("2d");
-    if (!fullCtx) throw new Error("Couldn't get a 2D context for the crop's full-frame canvas.");
-  }
-
   const renderer = new SceneRenderer({
     frame: { width: display.widthPx / display.scaleFactor, height: display.heightPx / display.scaleFactor },
     scaleFactor: display.scaleFactor,
     cursorTrack: loaded.cursorTrack,
     origin: { x: display.originX, y: display.originY },
+    crop: opts.crop,
     outputAspect,
     zoomKeyframes: opts.zoomKeyframes,
   });
@@ -258,31 +237,16 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
     const drawAt = (tS: number) => {
       const tUs = tS * 1_000_000 + videoStartUs;
       const active = sliceAt(opts.slices, tS);
-      if (crop && fullCanvas && fullCtx) {
-        renderer.draw(
-          fullCtx,
-          video,
-          tUs,
-          opts.style,
-          opts.showCursor,
-          opts.cursorSettings,
-          clipEndTUs,
-          active?.cursorOverride ?? null,
-        );
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(fullCanvas, crop.x, crop.y, crop.width, crop.height, 0, 0, canvas.width, canvas.height);
-      } else {
-        renderer.draw(
-          ctx,
-          video,
-          tUs,
-          opts.style,
-          opts.showCursor,
-          opts.cursorSettings,
-          clipEndTUs,
-          active?.cursorOverride ?? null,
-        );
-      }
+      renderer.draw(
+        ctx,
+        video,
+        tUs,
+        opts.style,
+        opts.showCursor,
+        opts.cursorSettings,
+        clipEndTUs,
+        active?.cursorOverride ?? null,
+      );
     };
 
     stream = canvas.captureStream(captureManually ? 0 : 30);
