@@ -233,11 +233,13 @@ export function getAmbientBuffer(id: AmbientTrackId): Promise<AudioBuffer> {
   return cached;
 }
 
-/** Decodes a user-uploaded background track (from `AudioSettings.customAudioUrl`,
- * a `blob:` URL — see `AudioPanel`'s upload handler). Returns `null` on any
- * failure (corrupt file, unsupported codec) rather than throwing, so a bad
- * upload just silently plays nothing instead of breaking playback/export. */
-export async function decodeCustomAudioTrack(ctx: BaseAudioContext, url: string): Promise<AudioBuffer | null> {
+/** Fetches and decodes any fetchable audio URL into a real `AudioBuffer` —
+ * a user-uploaded custom track's `blob:` URL (`AudioPanel`'s upload
+ * handler), or a `convertFileSrc`'d filesystem path (mic narration's
+ * `mic.wav` — see `narration.ts`). Returns `null` on any failure (corrupt
+ * file, unsupported codec, missing file) rather than throwing, so a bad
+ * track just silently plays nothing instead of breaking playback/export. */
+export async function decodeAudioFromUrl(ctx: BaseAudioContext, url: string): Promise<AudioBuffer | null> {
   try {
     const resp = await fetch(url);
     const arrayBuffer = await resp.arrayBuffer();

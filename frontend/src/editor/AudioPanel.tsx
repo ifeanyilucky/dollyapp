@@ -1,4 +1,4 @@
-import { BellRing, CloudRain, Moon, Trash2, Upload, Volume2, VolumeX, Waves, Wind, X } from "lucide-react";
+import { BellRing, CloudRain, Mic, Moon, Trash2, Upload, Volume2, VolumeX, Waves, Wind, X } from "lucide-react";
 import { useRef, type ComponentType } from "react";
 import { DEFAULT_AUDIO_SETTINGS, type AudioSettings, type AudioTrackSelection } from "./audioSettings";
 import { AMBIENT_TRACK_PRESETS, type AmbientTrackId } from "./backgroundAudio";
@@ -14,16 +14,21 @@ const PRESET_ICONS: Record<AmbientTrackId, ComponentType<{ className?: string }>
 };
 
 /**
- * Audio panel — speaker icon in the sidebar rail. One optional background
- * track (a built-in synthesized ambient loop, or a user-uploaded file —
- * see `backgroundAudio.ts`), looped under the recording with independent
- * volume/mute, real playback wired into both the live preview and export
- * via `EditorView`'s `BackgroundAudioPlayer`.
+ * Audio panel — speaker icon in the sidebar rail. Two independent audio
+ * sources, both real playback wired into the live preview and export (see
+ * `EditorView`'s `BackgroundAudioPlayer`/`NarrationPlayer`):
+ *
+ *  - Narration — the recording's own microphone track (`narration.ts`),
+ *    shown only when the loaded recording actually has one.
+ *  - Background audio — one optional track (a built-in synthesized
+ *    ambient loop, or a user-uploaded file — see `backgroundAudio.ts`),
+ *    looped under the whole recording.
  */
 export function AudioPanel({
   settings,
   onChange,
   onCommit,
+  hasMicAudio,
 }: {
   settings: AudioSettings;
   /** Live update — called on every change, including every intermediate
@@ -34,6 +39,11 @@ export function AudioPanel({
    * drag release; every discrete control here calls it immediately after
    * `onChange` via the local `set` helper. */
   onCommit: () => void;
+  /** Whether this recording has a microphone track at all
+   * (`RecordingMeta.hasMicAudio`) — the Narration section only renders
+   * when true, same as there being nothing to show for a webcam overlay on
+   * a recording that never captured one. */
+  hasMicAudio: boolean;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -69,6 +79,41 @@ export function AudioPanel({
 
   return (
     <div className="flex w-[340px] shrink-0 flex-col gap-5 overflow-y-auto rounded-xl border border-neutral-800/80 bg-neutral-950/70 p-5">
+      {hasMicAudio && (
+        <>
+          <div>
+            <h3 className="mb-2.5 flex items-center gap-1.5 text-[13px] font-medium text-neutral-200">
+              <Mic className="h-3.5 w-3.5 text-neutral-400" />
+              Narration
+            </h3>
+            <div className="flex flex-col gap-4">
+              <Slider
+                label="Volume"
+                value={settings.micVolume}
+                min={0}
+                max={100}
+                onChange={(v) => setLive("micVolume", v)}
+                onCommit={onCommit}
+                onReset={() => set("micVolume", DEFAULT_AUDIO_SETTINGS.micVolume)}
+              />
+              <div className="flex items-center justify-between gap-4">
+                <span className="flex items-center gap-1.5 text-[13px] font-medium text-neutral-200">
+                  {settings.micMuted ? (
+                    <VolumeX className="h-3.5 w-3.5 text-neutral-400" />
+                  ) : (
+                    <Volume2 className="h-3.5 w-3.5 text-neutral-400" />
+                  )}
+                  Mute narration
+                </span>
+                <Toggle checked={settings.micMuted} onChange={(v) => set("micMuted", v)} />
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-neutral-800" />
+        </>
+      )}
+
       <div>
         <h3 className="mb-2.5 text-[13px] font-medium text-neutral-200">Background audio</h3>
         <p className="mb-3 text-[11px] leading-relaxed text-neutral-500">

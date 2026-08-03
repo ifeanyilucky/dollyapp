@@ -6,7 +6,7 @@ import { AnimationPanel } from "./AnimationPanel";
 import { aspectRatioPreset } from "./aspect";
 import { deleteRecording, loadRecording, revealInFinder, type LoadedRecording } from "./api";
 import { AudioPanel } from "./AudioPanel";
-import { BackgroundAudioPlayer, decodeCustomAudioTrack, getAmbientBuffer, isAmbientTrackId } from "./backgroundAudio";
+import { BackgroundAudioPlayer, decodeAudioFromUrl, getAmbientBuffer, isAmbientTrackId } from "./backgroundAudio";
 import { playClickSound } from "./clickSound";
 import { CropFooter, CropOverlay, CropToolbar } from "./CropEditor";
 import { clampCropRect, fullFrameCrop, isFullFrameCrop, type CropRect } from "./crop";
@@ -18,6 +18,7 @@ import { IconRail, type ToolId } from "./IconRail";
 import { MaskOverlay } from "./MaskEditor";
 import { createMask, defaultMaskRange, defaultMaskRect, masksActiveAt, type MaskClip, type MaskType } from "./masks";
 import { MaskEditorPanel } from "./MaskEditorPanel";
+import { NarrationPlayer } from "./narration";
 import { computeContentRect, SceneRenderer, shiftCursorTrack } from "./renderer";
 import { initialSlices, resizeSlices, sliceAt, splitSliceAt, type ClipSlice } from "./slices";
 import { SliceEditorPanel } from "./SliceEditorPanel";
@@ -197,6 +198,11 @@ export function EditorView({
   // every play/pause. Lives alongside `audioCtxRef` rather than replacing
   // its own click-sound usage; both share the same `AudioContext`.
   const bgAudioPlayerRef = useRef<BackgroundAudioPlayer | null>(null);
+  // Mic narration playback (see `narration.ts`) — same lifecycle as
+  // `bgAudioPlayerRef` (created once, alongside it), but a separate player
+  // since narration is a single non-looping, seekable track rather than an
+  // always-looping ambient one.
+  const narrationPlayerRef = useRef<NarrationPlayer | null>(null);
   // Drive `PreviewControls`' fade — see the mouse-activity effect below.
   const previewHideTimerRef = useRef<number | null>(null);
   const hoveringPreviewControlsRef = useRef(false);
@@ -368,15 +374,42 @@ export function EditorView({
   // gates on `ctx.state`), so this is safe at mount.
   useEffect(() => {
     if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
-    const player = new BackgroundAudioPlayer(audioCtxRef.current, audioCtxRef.current.destination);
+    const ctx = audioCtxRef.current;
+    const player = new BackgroundAudioPlayer(ctx, ctx.destination);
     player.setVolume(audioSettingsRef.current.volume, audioSettingsRef.current.muted);
     bgAudioPlayerRef.current = player;
+    const narrationPlayer = new NarrationPlayer(ctx, ctx.destination);
+    narrationPlayer.setVolume(audioSettingsRef.current.micVolume, audioSettingsRef.current.micMuted);
+    narrationPlayerRef.current = narrationPlayer;
     return () => {
       player.dispose();
       bgAudioPlayerRef.current = null;
+      narrationPlayer.dispose();
+      narrationPlayerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Decodes the recording's own mic track (if it has one) once `loaded`
+  // arrives — a fixed, whole-file buffer, unlike the background track
+  // above which can change any time the user picks a different one.
+  useEffect(() => {
+    if (!loaded || !loaded.meta.hasMicAudio) return;
+    const ctx = audioCtxRef.current;
+    const player = narrationPlayerRef.current;
+    if (!ctx || !player) return;
+    let cancelled = false;
+    void decodeAudioFromUrl(ctx, convertFileSrc(loaded.micAudioPath)).then((buffer) => {
+      if (!cancelled) player.setBuffer(buffer);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loaded]);
+
+  useEffect(() => {
+    narrationPlayerRef.current?.setVolume(audioSettings.micVolume, audioSettings.micMuted);
+  }, [audioSettings.micVolume, audioSettings.micMuted]);
 
   // Resolves whichever track `audioSettings.trackId` points at (a built-in
   // ambient preset, or the user's uploaded file) into a real `AudioBuffer`
@@ -396,7 +429,7 @@ export function EditorView({
       const buffer = isAmbientTrackId(audioSettings.trackId)
         ? await getAmbientBuffer(audioSettings.trackId)
         : audioSettings.customAudioUrl
-          ? await decodeCustomAudioTrack(ctx!, audioSettings.customAudioUrl)
+          ? await decodeAudioFromUrl(ctx!, audioSettings.customAudioUrl)
           : null;
       if (!cancelled) player!.setBuffer(buffer);
     }
@@ -416,10 +449,18 @@ export function EditorView({
   // a real embedded audio track would — it doesn't need to track seeks/
   // scrubs/removed-slice jumps the way the video and cursor do, since it's
   // a decorative ambient loop rather than something synced to specific
-  // recorded moments.
+  // recorded moments. Narration, unlike the ambient loop, *does* need to
+  // start from wherever the video actually is (`playFrom`, not a plain
+  // `play`) — see `handleSeek` and `tick`'s per-frame `resyncIfDrifted`
+  // call for how it stays there afterward.
   useEffect(() => {
-    if (isPlaying) bgAudioPlayerRef.current?.play();
-    else bgAudioPlayerRef.current?.pause();
+    if (isPlaying) {
+      bgAudioPlayerRef.current?.play();
+      narrationPlayerRef.current?.playFrom(videoRef.current?.currentTime ?? 0);
+    } else {
+      bgAudioPlayerRef.current?.pause();
+      narrationPlayerRef.current?.pause();
+    }
   }, [isPlaying]);
 
   // Render loop: reads `video.currentTime` directly every animation
@@ -508,6 +549,11 @@ export function EditorView({
           }
         }
         lastSoundCheckTUsRef.current = tUs;
+
+        // Keeps narration lined up with `video.currentTime` over a long
+        // playback — a no-op whenever it's already close enough (see
+        // `NarrationPlayer.resyncIfDrifted`'s own threshold) or paused.
+        narrationPlayerRef.current?.resyncIfDrifted(video.currentTime);
 
         // `maskEditingActive`: the selected mask's box (`MaskOverlay`) is
         // actually showing right now — selected *and* currently in its own
@@ -713,6 +759,17 @@ export function EditorView({
     const video = videoRef.current;
     if (!video) return;
     if (video.paused) {
+      // WKWebView (this app's webview on macOS) only allows
+      // `AudioContext.resume()` to actually take effect when it's called
+      // synchronously inside a real user-gesture handler — calling it from
+      // an async callback or a `requestAnimationFrame` loop (even one
+      // triggered moments after a click) silently no-ops there, which is
+      // why background audio/click sounds need this *here*, not inside the
+      // `isPlaying` effect or `tick`'s rAF loop that actually start/stop
+      // them. Every play control (Space, canvas click, Timeline/
+      // PreviewControls buttons) funnels through this one function, so one
+      // resume call here covers all of them.
+      if (audioCtxRef.current?.state === "suspended") void audioCtxRef.current.resume();
       // Respect the clip in/out: never resume from before `clipStartS`, and
       // restart from the top if playback had already reached the end.
       if (clipEndS > 0 && video.currentTime >= clipEndS) video.currentTime = clipStartS;
@@ -732,6 +789,11 @@ export function EditorView({
     // position — see `tick`'s own comment on this ref.
     lastSoundCheckTUsRef.current = tUs;
     setCurrentTime(clamped);
+    // Keep narration lined up with a seek that happens mid-playback (e.g.
+    // clicking elsewhere on the timeline while playing) — a no-op while
+    // paused, since the `isPlaying` effect above already starts it from the
+    // right offset on the next play.
+    if (isPlaying) narrationPlayerRef.current?.playFrom(clamped);
   }
 
   /** Hover-scrub preview from `Timeline` (`onPreviewSeek`) — moves the
@@ -1247,6 +1309,7 @@ export function EditorView({
                 settings={audioSettings}
                 onChange={(next) => setDocTransient((d) => ({ ...d, audioSettings: next }))}
                 onCommit={commitDoc}
+                hasMicAudio={loaded.meta.hasMicAudio}
               />
             ) : activeTool === "animations" ? (
               <AnimationPanel

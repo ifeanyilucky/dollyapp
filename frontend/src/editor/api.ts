@@ -8,6 +8,9 @@ export interface LoadedRecording {
    * `convertFileSrc` (see `videoSrc` below), not used directly as `<video
    * src>`. */
   screenVideoPath: string;
+  /** Absolute path `mic.wav` would live at — only meaningful when
+   * `meta.hasMicAudio` is true (see `narration.ts`). */
+  micAudioPath: string;
 }
 
 export function loadRecording(bundlePath: string): Promise<LoadedRecording> {

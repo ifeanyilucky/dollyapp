@@ -5,10 +5,11 @@ import { setExportDestination, writeExportFile, type LoadedRecording } from "./a
 import type { AnimationSettings } from "./animationSettings";
 import { aspectRatioPreset, type AspectRatioId } from "./aspect";
 import type { AudioSettings } from "./audioSettings";
-import { BackgroundAudioPlayer, decodeCustomAudioTrack, getAmbientBuffer, isAmbientTrackId } from "./backgroundAudio";
+import { BackgroundAudioPlayer, decodeAudioFromUrl, getAmbientBuffer, isAmbientTrackId } from "./backgroundAudio";
 import type { CropRect } from "./crop";
 import type { CursorSettings } from "./cursorSettings";
 import { masksActiveAt, type MaskClip } from "./masks";
+import { NarrationPlayer } from "./narration";
 import { SceneRenderer } from "./renderer";
 import { computeOutputSize, resolutionPreset, type ResolutionId } from "./resolution";
 import { sliceAt, type ClipSlice } from "./slices";
@@ -139,7 +140,7 @@ async function loadVideoBlobUrl(path: string): Promise<{ url: string; revoke: ()
 async function resolveAudioBuffer(ctx: AudioContext, settings: AudioSettings): Promise<AudioBuffer | null> {
   if (!settings.trackId) return null;
   if (isAmbientTrackId(settings.trackId)) return getAmbientBuffer(settings.trackId);
-  return settings.customAudioUrl ? decodeCustomAudioTrack(ctx, settings.customAudioUrl) : null;
+  return settings.customAudioUrl ? decodeAudioFromUrl(ctx, settings.customAudioUrl) : null;
 }
 
 /**
@@ -242,20 +243,31 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
   let recorder: MediaRecorder | null = null;
   let stream: MediaStream | null = null;
   let running = false;
-  // Background audio (Audio panel) — only stood up at all when a track is
-  // actually selected, so an export with no background audio costs nothing
-  // extra and behaves exactly as it did before this existed.
-  let bgAudioCtx: AudioContext | null = null;
+  // Background audio + mic narration (Audio panel) share one mix context/
+  // destination — only stood up at all when there's actually something to
+  // mix (a background track selected, or the recording has a mic track),
+  // so an export with neither costs nothing extra and behaves exactly as
+  // it did before either of these existed.
+  let audioMixCtx: AudioContext | null = null;
+  let audioMixDestination: MediaStreamAudioDestinationNode | null = null;
   let bgAudioPlayer: BackgroundAudioPlayer | null = null;
-  let bgAudioDestination: MediaStreamAudioDestinationNode | null = null;
+  let narrationPlayer: NarrationPlayer | null = null;
 
   try {
-    if (opts.audioSettings.trackId) {
-      bgAudioCtx = new AudioContext();
-      bgAudioDestination = bgAudioCtx.createMediaStreamDestination();
-      bgAudioPlayer = new BackgroundAudioPlayer(bgAudioCtx, bgAudioDestination);
-      bgAudioPlayer.setVolume(opts.audioSettings.volume, opts.audioSettings.muted);
-      bgAudioPlayer.setBuffer(await resolveAudioBuffer(bgAudioCtx, opts.audioSettings));
+    if (opts.audioSettings.trackId || loaded.meta.hasMicAudio) {
+      audioMixCtx = new AudioContext();
+      audioMixDestination = audioMixCtx.createMediaStreamDestination();
+
+      if (opts.audioSettings.trackId) {
+        bgAudioPlayer = new BackgroundAudioPlayer(audioMixCtx, audioMixDestination);
+        bgAudioPlayer.setVolume(opts.audioSettings.volume, opts.audioSettings.muted);
+        bgAudioPlayer.setBuffer(await resolveAudioBuffer(audioMixCtx, opts.audioSettings));
+      }
+      if (loaded.meta.hasMicAudio) {
+        narrationPlayer = new NarrationPlayer(audioMixCtx, audioMixDestination);
+        narrationPlayer.setVolume(opts.audioSettings.micVolume, opts.audioSettings.micMuted);
+        narrationPlayer.setBuffer(await decodeAudioFromUrl(audioMixCtx, convertFileSrc(loaded.micAudioPath)));
+      }
     }
     await waitForEvent(video, "loadedmetadata", 30_000);
 
@@ -296,8 +308,8 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
     };
 
     stream = canvas.captureStream(captureManually ? 0 : 30);
-    if (bgAudioDestination) {
-      for (const audioTrack of bgAudioDestination.stream.getAudioTracks()) stream.addTrack(audioTrack);
+    if (audioMixDestination) {
+      for (const audioTrack of audioMixDestination.stream.getAudioTracks()) stream.addTrack(audioTrack);
     }
     const track = stream.getVideoTracks()[0] as MediaStreamTrack & { requestFrame?: () => void };
     recorder = new MediaRecorder(stream, {
@@ -320,6 +332,10 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
     recorder.start(1000);
 
     bgAudioPlayer?.play();
+    // Narration starts from the clip's own trim-in offset, not 0 — see
+    // `narration.ts`'s doc comment on the mic/screen-capture sync
+    // assumption this relies on.
+    narrationPlayer?.playFrom(videoClipStart);
     video.playbackRate = 1;
     await video.play();
 
@@ -350,6 +366,7 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
           if (captureManually) track.requestFrame?.();
           opts.onProgress?.(t - videoClipStart, totalSeconds);
         }
+        narrationPlayer?.resyncIfDrifted(t);
         requestAnimationFrame(loop);
       };
       requestAnimationFrame(loop);
@@ -379,7 +396,8 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
       // stream may be half-constructed
     }
     bgAudioPlayer?.dispose();
-    void bgAudioCtx?.close();
+    narrationPlayer?.dispose();
+    void audioMixCtx?.close();
     document.body.removeChild(canvas);
     document.body.removeChild(video);
     revokeVideoUrl();

@@ -24,6 +24,12 @@ export interface AudioSettings {
   /** 0-100. */
   volume: number;
   muted: boolean;
+  /** Narration (recorded microphone audio — `RecordingMeta.hasMicAudio`,
+   * see `narration.ts`) — independent volume/mute from the background
+   * track above. Only surfaced in `AudioPanel` when the loaded recording
+   * actually has a mic track; harmless unused defaults otherwise. */
+  micVolume: number;
+  micMuted: boolean;
 }
 
 export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
@@ -32,4 +38,6 @@ export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
   customAudioName: null,
   volume: 70,
   muted: false,
+  micVolume: 100,
+  micMuted: false,
 };
