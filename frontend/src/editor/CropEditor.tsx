@@ -132,12 +132,15 @@ export function CropToolbar({ draftCrop, onChangeDraft, sourceFrameWidth, source
   );
 }
 
-type HandleKind = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "move";
+export type HandleKind = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "move";
 
 /** How dragging by `(dx, dy)` (canvas-pixel space) from the rect captured
  * at drag-start transforms it, per handle. `move` (dragging the crop
- * body, not an edge/corner) translates without resizing. */
-function applyHandleDelta(kind: HandleKind, start: CropRect, dx: number, dy: number): CropRect {
+ * body, not an edge/corner) translates without resizing. Exported —
+ * `MaskEditor.tsx`'s `MaskOverlay` reuses this verbatim (a mask's on-canvas
+ * box is the exact same "8 handles + move" rect-editing interaction as
+ * crop's, just applied to a sub-region rather than the whole frame). */
+export function applyHandleDelta(kind: HandleKind, start: CropRect, dx: number, dy: number): CropRect {
   switch (kind) {
     case "move":
       return { ...start, x: start.x + dx, y: start.y + dy };
@@ -160,7 +163,8 @@ function applyHandleDelta(kind: HandleKind, start: CropRect, dx: number, dy: num
   }
 }
 
-const HANDLE_POSITIONS: { kind: HandleKind; className: string; cursor: string }[] = [
+/** Exported for `MaskOverlay`'s reuse — see `applyHandleDelta`. */
+export const HANDLE_POSITIONS: { kind: HandleKind; className: string; cursor: string }[] = [
   { kind: "nw", className: "-left-1.5 -top-1.5", cursor: "cursor-nwse-resize" },
   { kind: "ne", className: "-right-1.5 -top-1.5", cursor: "cursor-nesw-resize" },
   { kind: "sw", className: "-left-1.5 -bottom-1.5", cursor: "cursor-nesw-resize" },

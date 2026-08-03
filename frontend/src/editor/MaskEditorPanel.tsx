@@ -1,4 +1,4 @@
-import { ArrowLeft, CircleAlert, Crosshair, Highlighter, Shield, Trash2 } from "lucide-react";
+import { ArrowLeft, CircleAlert, Crosshair, Highlighter, MousePointerClick, Shield, Trash2 } from "lucide-react";
 import { DEFAULT_MASK_OPACITY, type MaskClip, type MaskType } from "./masks";
 import { Slider } from "./Slider";
 import { Toggle } from "./Toggle";
@@ -6,11 +6,13 @@ import { Toggle } from "./Toggle";
 /**
  * Per-mask editor — appears in place of the Style/Cursor panel once a mask
  * clip on the timeline is selected (see `EditorView`), following the same
- * pattern `SliceEditorPanel`/`ZoomEditorPanel` already establish. A
- * "sensitive data" mask is always fully opaque (see `masks.ts`'s doc
- * comment), so the opacity slider only ever applies to — and is only ever
- * shown for — the "highlight" type; a sensitive mask shows a reminder to
- * size its *time range* generously instead.
+ * pattern `SliceEditorPanel`/`ZoomEditorPanel` already establish. The
+ * masked *region* itself isn't edited here at all — that's a drag/resize
+ * box directly on the canvas (`MaskEditor.tsx`'s `MaskOverlay`, shown
+ * automatically while this panel is open); this panel only covers what
+ * doesn't have an obvious on-canvas equivalent: type, the highlight-only
+ * opacity (see `masks.ts`'s doc comment — it dims everything *outside* the
+ * box, never the box itself), disabling, and jumping the playhead to it.
  */
 export function MaskEditorPanel({
   mask,
@@ -94,13 +96,21 @@ export function MaskEditorPanel({
         Focus timeline on mask start
       </button>
 
+      <div className="flex items-start gap-2 rounded-lg border border-neutral-800 bg-neutral-900/60 p-3">
+        <MousePointerClick className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neutral-500" />
+        <p className="text-[11px] leading-relaxed text-neutral-500">
+          Drag the box directly on the video preview to reposition it, or its corners/edges to resize it.
+        </p>
+      </div>
+
       <div className="border-t border-neutral-800" />
 
       {mask.type === "highlight" ? (
         <div>
-          <h3 className="text-[13px] font-medium text-neutral-200">Opacity</h3>
+          <h3 className="text-[13px] font-medium text-neutral-200">Dim outside area</h3>
           <p className="mb-2.5 mt-1 text-[11px] leading-relaxed text-neutral-500">
-            How strongly the highlight tints this part of the recording.
+            How dark everything *outside* the box gets. The box itself always stays at full, normal visibility —
+            that's the whole point of a highlight.
           </p>
           <Slider
             value={mask.opacity}
@@ -116,7 +126,8 @@ export function MaskEditorPanel({
         <div className="flex items-start gap-2 rounded-lg border border-amber-900/40 bg-amber-950/20 p-3">
           <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
           <p className="text-[11px] leading-relaxed text-amber-200/80">
-            Make sure the mask covers the entire part of the timeline where sensitive data is present.
+            Make sure the box covers the sensitive content on screen, and its time range on the timeline covers the
+            entire period it's visible for.
           </p>
         </div>
       )}

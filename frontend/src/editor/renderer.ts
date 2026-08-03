@@ -76,10 +76,22 @@ const LOOP_BLEND_DURATION_US = 1_200_000;
  * not to flicker during a slow, deliberate drag. */
 const IDLE_WINDOW_US = 500_000;
 const IDLE_THRESHOLD_PX = 3;
-/** "Highlight" mask tint — a distinct, unmistakably-"marked" color (an
- * actual highlighter-pen amber) rather than reusing an accent color already
- * meaningful elsewhere (indigo = zoom, amber-on-black = slices). */
-const HIGHLIGHT_MASK_COLOR = "#fbbf24";
+/** A "sensitive" mask's blur radius, as a fraction of its own on-screen
+ * (content-rect-pixel) size — scales with how big/zoomed the box currently
+ * renders at rather than a fixed pixel count, so it reads as "thoroughly
+ * blurred" the same way regardless of the box's size or the current zoom
+ * level. Tuned by eye. */
+const MASK_BLUR_FRACTION = 0.18;
+/** How far past `MASK_BLUR_FRACTION`'s own radius to overscan the region
+ * sampled from `video` before blurring (see `drawBlurredRegion`) — without
+ * this, a Gaussian blur right at the edge of a small scratch canvas would
+ * partly sample *transparent* pixels rather than real (if unblurred)
+ * picture content, fading the masked box's own edges toward see-through
+ * rather than solidly blurred. Since this is hiding something specifically
+ * because it's sensitive, a translucent edge that lets the sharp original
+ * peek through underneath isn't just a quality nit, it's a real leak — so
+ * this errs generous. */
+const MASK_BLUR_OVERSCAN_FACTOR = 2.5;
 
 export interface Rect {
   x: number;
@@ -235,6 +247,11 @@ export class SceneRenderer {
   private lastViewport: Rect | null = null;
   private lastCursorRenderPos: { x: number; y: number } | null = null;
   private lastDrawWallClockMs: number | null = null;
+  // Scratch canvas reused across masks/frames for `drawBlurredRegion` — the
+  // video frame changes every draw anyway, so (unlike `shadowLayer`/
+  // `backgroundLayer`) there's nothing to cache *across* frames; this just
+  // avoids allocating a fresh canvas element per masked region per frame.
+  private maskBlurBuffer: HTMLCanvasElement | null = null;
 
   constructor(opts: SceneRendererOptions) {
     this.scaleFactor = opts.scaleFactor;
@@ -409,7 +426,7 @@ export class SceneRenderer {
       ctx.restore();
     }
 
-    this.drawMasks(ctx, content, style, activeMasks);
+    this.drawMasks(ctx, video, viewport, content, style, activeMasks);
 
     // `cursor` still drives pan above even when the glyph itself is
     // hidden — this flag is purely visual, not a "stop tracking" switch.
