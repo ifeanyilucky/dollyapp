@@ -199,12 +199,25 @@ export function EditorView({
   const maskPreviewActiveRef = useRef(false);
   // Whether a handle on the selected mask's `MaskOverlay` box is currently
   // being dragged — set via `MaskOverlay`'s `onDraggingChange`. `tick` uses
-  // this (together with `maskPreviewActiveRef`) to briefly swap the mask's
-  // real, rendered effect out for raw content while a handle is actually
-  // held down, so e.g. a "sensitive" box can be lined up against picture
-  // that isn't already blurred out from under it — see `MaskEditor.tsx`'s
-  // module doc comment.
+  // this (together with `maskPreviewActiveRef`) to briefly swap a
+  // *"sensitive"* mask's real, rendered blur out for raw content while a
+  // handle is actually held down, so its box can be lined up against
+  // picture that isn't already blurred out from under it — see
+  // `MaskEditor.tsx`'s module doc comment. Not applied to "highlight"
+  // masks (see `selectedMaskTypeRef`): dimming the *outside* never
+  // obscures anything inside the box you're actually resizing, so there's
+  // nothing to peek past — suppressing it too just made the live dim
+  // preview flicker off for the entire drag.
   const maskDraggingRef = useRef(false);
+  // Mirrors `selectedMask?.type` — see `maskDraggingRef`'s doc comment for
+  // why `tick` needs to know this.
+  const selectedMaskTypeRef = useRef<MaskType | null>(null);
+  // Whichever element(s) a click should *not* count as "outside the mask"
+  // for `MaskOverlay`'s click-to-deselect handling — currently just the
+  // sidebar column (`IconRail` + whichever panel is open), so interacting
+  // with `MaskEditorPanel`'s own controls doesn't itself end the editing
+  // session. See the `showSidebar &&` block's wrapper `<div>` below.
+  const sidebarRef = useRef<HTMLDivElement>(null);
   // The recording's own point-space dimensions (independent of crop,
   // resolution, or aspect ratio) — the coordinate space `doc.crop`/
   // `draftCrop` live in (see `crop.ts`). Set once `loaded` (where it's
@@ -408,15 +421,18 @@ export function EditorView({
         // progress zoom/pan — same as `cropModeRef`, below.
         const maskEditingActive = maskPreviewActiveRef.current;
         // Only while a handle on that box is actually being *held down*
-        // (`maskDraggingRef`, set by `MaskOverlay`'s `onDraggingChange`) is
-        // the mask's own real effect swapped out for raw content — the
-        // rest of the time (not dragging, just selected) the canvas shows
-        // the mask's genuine rendered effect, so this always stays
-        // What-You-See-Is-What-You-Export rather than a separate, easily-
-        // out-of-sync approximation (the previous version's actual bug:
-        // `MaskOverlay` used to paint its own fixed-alpha dim/blur preview
-        // that ignored the mask's real `opacity` and `disabled`).
-        const suppressSelectedMaskRender = maskEditingActive && maskDraggingRef.current;
+        // (`maskDraggingRef`, set by `MaskOverlay`'s `onDraggingChange`),
+        // and only for a "sensitive" (blur) mask specifically — see
+        // `maskDraggingRef`'s doc comment for why "highlight" is excluded
+        // — is the mask's own real effect swapped out for raw content. The
+        // rest of the time the canvas shows the mask's genuine rendered
+        // effect, so this always stays What-You-See-Is-What-You-Export
+        // rather than a separate, easily-out-of-sync approximation (the
+        // previous version's actual bug: `MaskOverlay` used to paint its
+        // own fixed-alpha dim/blur preview that ignored the mask's real
+        // `opacity` and `disabled`).
+        const suppressSelectedMaskRender =
+          maskEditingActive && maskDraggingRef.current && selectedMaskTypeRef.current === "sensitive";
         renderer.draw(
           ctx,
           video,
@@ -430,6 +446,7 @@ export function EditorView({
           masksActiveAt(masksRef.current, video.currentTime).filter(
             (m) => !(suppressSelectedMaskRender && m.id === selectedMaskIdRef.current),
           ),
+          maskEditingActive ? selectedMaskIdRef.current : null,
         );
         // Skip while previewing — the committed playhead (`currentTime`,
         // and the real solid-white indicator it drives in `Timeline`) must
@@ -978,6 +995,7 @@ export function EditorView({
   // can read it without becoming a dependency of that `useEffect`.
   const maskPreviewActive = selectedMask ? currentTime >= selectedMask.startS && currentTime < selectedMask.endS : false;
   maskPreviewActiveRef.current = maskPreviewActive;
+  selectedMaskTypeRef.current = selectedMask?.type ?? null;
 
   return (
     <div className="relative flex h-screen w-screen flex-col bg-neutral-950 text-neutral-300">
@@ -1066,6 +1084,8 @@ export function EditorView({
               onDraggingChange={(dragging) => {
                 maskDraggingRef.current = dragging;
               }}
+              onDeselect={() => setSelectedMaskId(null)}
+              ignoreRef={sidebarRef}
               frameWidth={effectiveFrameSize.width}
               frameHeight={effectiveFrameSize.height}
               contentRect={cropContentRect}
@@ -1076,7 +1096,12 @@ export function EditorView({
           )}
         </div>
         {showSidebar && (
-          <>
+          // `className="contents"` (`display: contents`) makes this `<div>`
+          // invisible to the flex layout — `IconRail`/the panel still lay
+          // out as if they were direct children of the row above — while
+          // still being a real DOM node `sidebarRef` can point at, for
+          // `MaskOverlay`'s click-outside-to-deselect check.
+          <div ref={sidebarRef} className="contents">
             <IconRail
               active={selectedSlice || selectedZoomKeyframe || selectedMask ? null : activeTool}
               onSelect={selectTool}
@@ -1123,7 +1148,7 @@ export function EditorView({
                 onCommit={commitDoc}
               />
             )}
-          </>
+          </div>
         )}
       </div>
 

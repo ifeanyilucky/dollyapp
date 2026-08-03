@@ -92,6 +92,13 @@ const MASK_BLUR_FRACTION = 0.18;
  * peek through underneath isn't just a quality nit, it's a real leak — so
  * this errs generous. */
 const MASK_BLUR_OVERSCAN_FACTOR = 2.5;
+/** A mask's own corner radius (fraction of its smaller on-screen
+ * dimension) while it's just sitting there being played back normally —
+ * *not* while it's the one currently being actively edited, where it
+ * renders perfectly square instead, matching `MaskOverlay`'s square
+ * corner-handle box exactly (rounding it there would visibly disagree with
+ * where the handles actually are). See `draw`'s `editingMaskId`. */
+const MASK_CORNER_RADIUS_FRACTION = 0.12;
 
 export interface Rect {
   x: number;
@@ -327,7 +334,12 @@ export class SceneRenderer {
    * way `sliceCursorOverride` is resolved via `sliceAt` — drawn as a
    * full-content-rect cover/tint *underneath* the cursor (a mask hides
    * recorded screen content; the cursor is an editor-added annotation
-   * layer, not itself part of what a mask needs to hide). */
+   * layer, not itself part of what a mask needs to hide). `editingMaskId`:
+   * whichever mask (if any) currently has its `MaskOverlay` box open for
+   * editing — that one renders perfectly square (see
+   * `MASK_CORNER_RADIUS_FRACTION`) so its corners line up exactly with the
+   * overlay's own square corner handles; every other active mask still
+   * gets its normal rounded corners. */
   draw(
     ctx: CanvasRenderingContext2D,
     video: HTMLVideoElement,
@@ -339,6 +351,7 @@ export class SceneRenderer {
     sliceCursorOverride: SliceCursorOverride | null = null,
     forceFullFrame = false,
     activeMasks: MaskClip[] = [],
+    editingMaskId: string | null = null,
   ): void {
     const canvas = ctx.canvas;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -426,7 +439,7 @@ export class SceneRenderer {
       ctx.restore();
     }
 
-    this.drawMasks(ctx, video, viewport, content, style, activeMasks);
+    this.drawMasks(ctx, video, viewport, content, style, activeMasks, editingMaskId);
 
     // `cursor` still drives pan above even when the glyph itself is
     // hidden — this flag is purely visual, not a "stop tracking" switch.
@@ -504,6 +517,7 @@ export class SceneRenderer {
     content: Rect,
     style: StyleSettings,
     masks: MaskClip[],
+    editingMaskId: string | null,
   ): void {
     if (masks.length === 0) return;
     ctx.save();
@@ -516,39 +530,46 @@ export class SceneRenderer {
       const rh = (mask.rect.height / viewport.height) * content.height;
       if (rw <= 0 || rh <= 0) continue;
 
+      // Square while it's the one currently open for editing (so it lines
+      // up with `MaskOverlay`'s square corner handles), rounded otherwise
+      // — see `MASK_CORNER_RADIUS_FRACTION`.
+      const radius = mask.id === editingMaskId ? 0 : Math.min(rw, rh) * MASK_CORNER_RADIUS_FRACTION;
+
       if (mask.type === "sensitive") {
-        this.drawBlurredRegion(ctx, video, mask.rect, rx, ry, rw, rh);
+        this.drawBlurredRegion(ctx, video, mask.rect, rx, ry, rw, rh, radius);
       } else {
-        // Highlight: dim everything *outside* this rect — four bands
-        // (top/bottom span the full content width, left/right fill
-        // exactly the rect's own height) rather than a single overlay
-        // with a cutout, the same technique `MaskOverlay`'s on-canvas
-        // preview and `CropOverlay`'s crop-exclusion dimming both already
-        // use for the identical "dim around a rect" shape. The rect's own
-        // area is deliberately untouched — a highlight's entire purpose is
-        // that the highlighted thing stays completely normal.
+        // Highlight: dim everything *outside* this (possibly rounded) rect
+        // — fill the whole content area, then punch the rect back out via
+        // an evenodd-rule compound path (outer content bounds + inner
+        // rounded rect as two subpaths — a point inside both is crossed an
+        // even number of times and so left unfilled). The rect's own area
+        // is deliberately untouched either way — a highlight's entire
+        // purpose is that the highlighted thing stays completely normal.
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(content.x, content.y, content.width, content.height);
+        roundedRectSubpath(ctx, { x: rx, y: ry, width: rw, height: rh }, radius);
         ctx.fillStyle = `rgba(0,0,0,${mask.opacity})`;
-        ctx.fillRect(content.x, content.y, content.width, ry - content.y);
-        ctx.fillRect(content.x, ry + rh, content.width, content.y + content.height - (ry + rh));
-        ctx.fillRect(content.x, ry, rx - content.x, rh);
-        ctx.fillRect(rx + rw, ry, content.x + content.width - (rx + rw), rh);
+        ctx.fill("evenodd");
+        ctx.restore();
       }
     }
     ctx.restore();
   }
 
   /** Blurs just the `sourceRect` (point-space) region of `video` and draws
-   * it at `(destX, destY, destW, destH)` in canvas-pixel space — the
-   * "sensitive" mask's actual redaction. Draws into a scratch canvas
-   * *overscanned* by `MASK_BLUR_OVERSCAN_FACTOR`'s worth of extra margin
-   * before blurring, then composites back only the unpadded center: a
-   * Gaussian blur sampled right at the edge of a canvas that has nothing
-   * beyond it blurs *toward transparent* there (there's no real pixel data
-   * to blend with past the edge), which would let the sharp, unblurred
-   * frame already drawn underneath show through at the masked box's own
-   * border — overscanning means every blurred pixel that actually gets
-   * composited back had real neighboring picture data on all sides to
-   * blur with, so the box is solidly blurred edge-to-edge. */
+   * it, clipped to a rect of corner `radius`, at `(destX, destY, destW,
+   * destH)` in canvas-pixel space — the "sensitive" mask's actual
+   * redaction. Draws into a scratch canvas *overscanned* by
+   * `MASK_BLUR_OVERSCAN_FACTOR`'s worth of extra margin before blurring,
+   * then composites back only the unpadded center: a Gaussian blur sampled
+   * right at the edge of a canvas that has nothing beyond it blurs *toward
+   * transparent* there (there's no real pixel data to blend with past the
+   * edge), which would let the sharp, unblurred frame already drawn
+   * underneath show through at the masked box's own border — overscanning
+   * means every blurred pixel that actually gets composited back had real
+   * neighboring picture data on all sides to blur with, so the box is
+   * solidly blurred edge-to-edge. */
   private drawBlurredRegion(
     ctx: CanvasRenderingContext2D,
     video: HTMLVideoElement,
@@ -557,6 +578,7 @@ export class SceneRenderer {
     destY: number,
     destW: number,
     destH: number,
+    radius: number,
   ): void {
     const blurPx = Math.max(destW, destH) * MASK_BLUR_FRACTION;
     const padPx = Math.ceil(blurPx * MASK_BLUR_OVERSCAN_FACTOR);
@@ -584,7 +606,11 @@ export class SceneRenderer {
     bctx.filter = "none";
     this.maskBlurBuffer = buffer;
 
+    ctx.save();
+    roundedRectPath(ctx, { x: destX, y: destY, width: destW, height: destH }, radius);
+    ctx.clip();
     ctx.drawImage(buffer, padPx, padPx, bw - padPx * 2, bh - padPx * 2, destX, destY, destW, destH);
+    ctx.restore();
   }
 
   /** `outputAspect` when set (the viewport is reframed to match it, see
@@ -875,16 +901,24 @@ function lerpRect(a: Rect, b: Rect, t: number): Rect {
   };
 }
 
-function roundedRectPath(ctx: CanvasRenderingContext2D, rect: Rect, radius: number): void {
+/** Traces a rounded rect as a subpath *without* starting a new path — lets
+ * a caller combine it with another already-open subpath (see `drawMasks`'s
+ * highlight-mask "punch a rounded hole" fill, which needs both the content
+ * rect and this in the same path for an evenodd fill to work). */
+function roundedRectSubpath(ctx: CanvasRenderingContext2D, rect: Rect, radius: number): void {
   const r = Math.min(radius, rect.width / 2, rect.height / 2);
   const { x, y, width: w, height: h } = rect;
-  ctx.beginPath();
   ctx.moveTo(x + r, y);
   ctx.arcTo(x + w, y, x + w, y + h, r);
   ctx.arcTo(x + w, y + h, x, y + h, r);
   ctx.arcTo(x, y + h, x, y, r);
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
+}
+
+function roundedRectPath(ctx: CanvasRenderingContext2D, rect: Rect, radius: number): void {
+  ctx.beginPath();
+  roundedRectSubpath(ctx, rect, radius);
 }
 
 /** Fill/stroke treatment per `CursorSettings.style` — applied to the

@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { applyHandleDelta, HANDLE_POSITIONS } from "./CropEditor";
 import { clampCropRect, type CropRect } from "./crop";
 
@@ -33,6 +33,8 @@ export function MaskOverlay({
   onChangeRect,
   onCommit,
   onDraggingChange,
+  onDeselect,
+  ignoreRef,
   frameWidth,
   frameHeight,
   contentRect,
@@ -51,6 +53,21 @@ export function MaskOverlay({
    * show the mask's real effect or briefly suppress it (see the module
    * doc comment). */
   onDraggingChange: (dragging: boolean) => void;
+  /** A pointer press anywhere that isn't this box (see `ignoreRef`) ends
+   * the editing session — the standard "click away to deselect" a design
+   * tool's own selected shape already gets you used to. Listens in the
+   * capture phase on `window` so it sees the press before whatever's under
+   * it (e.g. a different timeline block's own select handler) does; if
+   * that press turns out to be selecting something else, its own handler
+   * still runs right after and produces the correct final state, since
+   * React batches both updates from the same native event into one
+   * render. */
+  onDeselect: () => void;
+  /** A press inside this element (or any descendant) doesn't count as
+   * "outside" — `EditorView` passes its sidebar column's ref, so using
+   * `MaskEditorPanel`'s own controls (the opacity slider, disable toggle,
+   * ...) doesn't itself end the editing session. */
+  ignoreRef: RefObject<HTMLElement | null>;
   /** The *effective* frame's point-space dimensions (the confirmed crop's
    * own size once one exists, the full recording otherwise) — see
    * `MaskClip.rect`'s doc comment for why this differs from
@@ -67,6 +84,18 @@ export function MaskOverlay({
   canvasRef: RefObject<HTMLCanvasElement | null>;
 }) {
   const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handlePointerDown(e: PointerEvent) {
+      const target = e.target as Node | null;
+      if (target && (boxRef.current?.contains(target) || ignoreRef.current?.contains(target))) return;
+      onDeselect();
+    }
+    // Capture phase — see `onDeselect`'s doc comment for why.
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [onDeselect, ignoreRef]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -144,6 +173,7 @@ export function MaskOverlay({
   return (
     <div className="pointer-events-none absolute" style={{ left: box.left, top: box.top, width: box.width, height: box.height }}>
       <div
+        ref={boxRef}
         className="pointer-events-auto absolute cursor-move border border-transparent"
         style={{ left, top, width, height }}
         onPointerDown={(e) => beginDrag(e, "move")}
