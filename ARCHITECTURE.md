@@ -83,18 +83,30 @@ native addons inside an Electron app.
 
 ## Recording format
 
-A recording is a **bundle directory**, not a single file:
+A recording is a **single `.dol` file**, like a `.doc`/`.docx` document —
+one flat file, whatever it contains. Internally it's a zip (see
+`src-tauri/src/bundle`), so the schema stays inspectable:
 
 ```
-MyRecording.motionrec/
-├── meta.json          # version, display info, scale factor, duration, clock epoch
-├── screen.mov          # HEVC or ProRes, native retina resolution, 60fps
-├── webcam.mov           # optional
-├── system.wav           # optional
-├── mic.wav               # optional
-├── cursor.json         # cursor samples + input events
-└── project.json        # user edits — keyframes, trims, style. Absent until first edit
+My Recording.dol          # one file, nothing else on disk
+├── meta.json             # version, display info, scale factor, duration, clock epoch (deflated)
+├── screen.mov            # HEVC or ProRes, native retina resolution, 60fps (stored)
+├── cursor.json           # cursor samples + input events (deflated)
+├── mic.wav               # optional (stored)
+└── project.json          # user edits — keyframes, trims, style. Absent until first edit (deflated)
 ```
+
+During capture the files are staged into a plain directory in the app's
+**cache** (a video stream can't be written into an archive live), then
+packed into `~/Movies/Dolly/<Name>.dol` the instant recording stops and the
+staging directory is removed — so only the one `.dol` file ever appears in
+the user's recordings folder. Media entries are **stored uncompressed** in
+the archive, which keeps their bytes contiguous at a fixed offset; the
+editor plays them straight out of the `.dol` via the custom `dol://` scheme
+(`dol_protocol`), which serves HTTP `Range` requests by seeking into the
+file — no unpacking on open, no second copy on disk. `BundleReader` also
+still reads the `*.motionrec` directories old recordings were written as,
+so nothing on disk stops working.
 
 `cursor.json` samples cursor position at **120Hz even though video is
 60fps** — the smoothing filter needs oversampled input, and the extra data

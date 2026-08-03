@@ -181,3 +181,82 @@ fn has_zip_entry(path: &Path, name: &str) -> Result<bool> {
     let found = archive.by_name(name).is_ok();
     Ok(found)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bundle::container::pack_recording;
+    use crate::bundle::{BundleWriter, CursorSample, CursorType, DisplayInfo, RecordingMeta};
+
+    fn sample_meta() -> RecordingMeta {
+        RecordingMeta {
+            version: RecordingMeta::CURRENT_VERSION,
+            clock_epoch: 1_000_000,
+            video_start_us: 150_000,
+            display: DisplayInfo {
+                width_px: 2560,
+                height_px: 1440,
+                scale_factor: 2.0,
+                origin_x: 0.0,
+                origin_y: 0.0,
+            },
+            duration_us: 30_000_000,
+            has_webcam: false,
+            has_system_audio: false,
+            has_mic_audio: false,
+            fps: 60,
+        }
+    }
+
+    fn sample_track(clock_epoch: u64) -> CursorTrack {
+        let mut track = CursorTrack::new(clock_epoch);
+        track.samples.push(CursorSample {
+            t: 0,
+            x: 100.0,
+            y: 200.0,
+            cursor_type: CursorType::Arrow,
+        });
+        track
+    }
+
+    #[test]
+    fn reads_a_packed_dol_bundle_round_trip() {
+        let staging = tempfile::tempdir().unwrap();
+        let bundle_root = staging.path().join("staging.motionrec");
+        let writer = BundleWriter::create(&bundle_root).unwrap();
+        writer.write_meta(&sample_meta()).unwrap();
+        writer.write_cursor_track(&sample_track(sample_meta().clock_epoch)).unwrap();
+        std::fs::write(writer.screen_video_path(), b"fake-video-bytes").unwrap();
+
+        let dest_dir = tempfile::tempdir().unwrap();
+        let dest = dest_dir.path().join("Recording 1.dol");
+        pack_recording(&bundle_root, &dest).unwrap();
+
+        let reader = BundleReader::open(&dest).unwrap();
+        assert!(reader.is_packed());
+        assert_eq!(reader.read_meta().unwrap().fps, 60);
+        assert_eq!(reader.read_cursor_track().unwrap().samples.len(), 1);
+        assert!(
+            reader.screen_video_url().starts_with("dol://"),
+            "packed bundles must be served over dol://, got {}",
+            reader.screen_video_url()
+        );
+
+        reader.remove().unwrap();
+        assert!(!dest.exists());
+    }
+
+    #[test]
+    fn still_reads_legacy_motionrec_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundle_path = dir.path().join("legacy.motionrec");
+        let writer = BundleWriter::create(&bundle_path).unwrap();
+        writer.write_meta(&sample_meta()).unwrap();
+        writer.write_cursor_track(&sample_track(sample_meta().clock_epoch)).unwrap();
+
+        let reader = BundleReader::open(&bundle_path).unwrap();
+        assert!(!reader.is_packed());
+        assert_eq!(reader.screen_video_url(), writer.screen_video_path().display().to_string());
+        assert_eq!(reader.read_meta().unwrap().version, RecordingMeta::CURRENT_VERSION);
+    }
+}
