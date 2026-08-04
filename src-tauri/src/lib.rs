@@ -62,6 +62,7 @@ pub fn run() {
             commands::resume_recording,
             commands::set_mic_enabled,
             commands::load_recording,
+            commands::save_project,
             commands::reveal_in_finder,
             commands::delete_recording,
             commands::export_set_destination,

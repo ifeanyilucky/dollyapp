@@ -21,6 +21,12 @@ pub struct LoadedRecording {
     /// Counterpart to `screen_video_url` for the mic track — `None` when
     /// `meta.has_mic_audio` is false.
     mic_audio_url: Option<String>,
+    /// The editor's saved `project.json` — the frontend's `EditorDocument`
+    /// (crop, slices, masks, zoom keyframes, style, ...). `None` until the
+    /// recording's first edit is saved, so a never-touched recording loads
+    /// fresh defaults + auto-generated keyframes (ARCHITECTURE.md, "absent
+    /// until first edit").
+    project_json: Option<String>,
 }
 
 #[tauri::command]
@@ -30,6 +36,7 @@ pub fn load_recording(bundle_path: String) -> Result<LoadedRecording, String> {
     let cursor_track = reader.read_cursor_track().map_err(|e| e.to_string())?;
     let screen_video_url = reader.screen_video_url();
     let mic_audio_url = meta.has_mic_audio.then(|| reader.mic_audio_url().unwrap_or_default());
+    let project_json = reader.read_project();
 
     Ok(LoadedRecording {
         meta,
@@ -37,7 +44,19 @@ pub fn load_recording(bundle_path: String) -> Result<LoadedRecording, String> {
         bundle_path: reader.path().display().to_string(),
         screen_video_url,
         mic_audio_url,
+        project_json,
     })
+}
+
+/// Persists the editor's `EditorDocument` into the recording's
+/// `project.json` entry — the save half of project persistence (load comes
+/// back through `load_recording`'s `projectJson`). See
+/// `BundleReader::write_project` for how the `.dol` archive is safely
+/// rewritten.
+#[tauri::command]
+pub fn save_project(bundle_path: String, project_json: String) -> Result<(), String> {
+    let reader = BundleReader::open(&bundle_path).map_err(|e| e.to_string())?;
+    reader.write_project(&project_json).map_err(|e| e.to_string())
 }
 
 /// Reveals the bundle in Finder — a single file for `.dol` bundles, a

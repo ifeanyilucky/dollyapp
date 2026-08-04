@@ -11,10 +11,12 @@
 //! than file paths; for legacy directories it gets the plain file paths it
 //! turns into `asset:` URLs itself.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use zip::write::SimpleFileOptions;
+use zip::{ZipArchive, ZipWriter};
 
 use crate::bundle::{names, CursorTrack, RecordingMeta};
 use crate::dol_protocol;
@@ -126,6 +128,35 @@ impl BundleReader {
         }
     }
 
+    /// The editor's saved `project.json` (`EditorDocument` on the frontend)
+    /// — `None` when the recording has never been edited, which is the
+    /// "absent until first edit" state ARCHITECTURE.md describes.
+    pub fn read_project(&self) -> Option<String> {
+        let bytes = if self.packed {
+            read_zip_entry_optional(&self.root, names::PROJECT)?
+        } else {
+            std::fs::read(self.root.join(names::PROJECT)).ok()?
+        };
+        String::from_utf8(bytes).ok()
+    }
+
+    /// Replaces (or, on first edit, creates) the `project.json` entry. For
+    /// legacy `*.motionrec` directories this is a plain file write; for
+    /// packed `.dol` files the archive is rewritten — every existing entry
+    /// streamed through with `project.json` swapped for the new value — to a
+    /// temp file that's atomically renamed over the original, so `dol://`
+    /// requests (which open the archive fresh per request) never observe a
+    /// half-written bundle. Media entries keep their `Stored` compression
+    /// and Zip64 flags so `dol_protocol`'s byte-range serving keeps working.
+    pub fn write_project(&self, json: &str) -> Result<()> {
+        if self.packed {
+            rewrite_zip_with_project(&self.root, json)
+        } else {
+            let path = self.root.join(names::PROJECT);
+            std::fs::write(&path, json).with_context(|| format!("writing {}", path.display()))
+        }
+    }
+
     fn read_entry(&self, name: &str) -> Result<Vec<u8>> {
         if self.packed {
             read_zip_entry(&self.root, name)
@@ -180,6 +211,71 @@ fn has_zip_entry(path: &Path, name: &str) -> Result<bool> {
         .with_context(|| format!("{} is not a valid .dol file", path.display()))?;
     let found = archive.by_name(name).is_ok();
     Ok(found)
+}
+
+/// Same as `read_zip_entry` but returns `None` for a missing entry instead
+/// of erroring — `project.json` legitimately doesn't exist until the first
+/// edit is saved.
+fn read_zip_entry_optional(path: &Path, name: &str) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut archive = ZipArchive::new(file).ok()?;
+    let mut entry = archive.by_name(name).ok()?;
+    let mut bytes = Vec::with_capacity(entry.size() as usize);
+    entry.read_to_end(&mut bytes).ok()?;
+    Some(bytes)
+}
+
+/// Streams every entry of the `.dol` at `path` into a fresh archive with
+/// `project.json` set to `json` (replacing any existing one), then swaps it
+/// over the original. Entries are copied byte-for-byte with their original
+/// compression and Zip64 layout, so nothing but the project entry changes.
+fn rewrite_zip_with_project(path: &Path, json: &str) -> Result<()> {
+    let tmp = PathBuf::from(format!("{}.tmp", path.display()));
+    let rewritten = (|| -> Result<()> {
+        let mut out = ZipWriter::new(
+            std::fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?,
+        );
+        let file = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+        let mut archive = ZipArchive::new(file)
+            .with_context(|| format!("{} is not a valid .dol file", path.display()))?;
+
+        for i in 0..archive.len() {
+            let mut entry = archive
+                .by_index(i)
+                .with_context(|| format!("reading zip entry {i} from {}", path.display()))?;
+            let name = entry.name().to_owned();
+            let entry_name = name.clone();
+            if name == names::PROJECT {
+                continue; // replaced below
+            }
+            // Keep Stored media entries Stored + Zip64, and deflated JSON
+            // entries deflated, exactly as `pack_recording` wrote them.
+            let options = SimpleFileOptions::default()
+                .compression_method(entry.compression())
+                .large_file(name == names::SCREEN_VIDEO || name == names::MIC_AUDIO);
+            out.start_file(name, options)
+                .with_context(|| format!("starting zip entry {entry_name}"))?;
+            std::io::copy(&mut entry, &mut out)
+                .with_context(|| format!("writing zip entry {entry_name}"))?;
+        }
+
+        out.start_file(names::PROJECT, SimpleFileOptions::default())
+            .with_context(|| format!("starting zip entry {}", names::PROJECT))?;
+        out.write_all(json.as_bytes())
+            .with_context(|| format!("writing zip entry {}", names::PROJECT))?;
+        out.finish()
+            .with_context(|| format!("finishing zip archive at {}", tmp.display()))?;
+        Ok(())
+    })();
+
+    match rewritten {
+        Ok(()) => std::fs::rename(&tmp, path)
+            .with_context(|| format!("replacing {}", path.display())),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -258,5 +354,59 @@ mod tests {
         assert!(!reader.is_packed());
         assert_eq!(reader.screen_video_url(), writer.screen_video_path().display().to_string());
         assert_eq!(reader.read_meta().unwrap().version, RecordingMeta::CURRENT_VERSION);
+    }
+
+    #[test]
+    fn project_is_absent_until_first_save_then_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let bundle_path = dir.path().join("legacy.motionrec");
+        let writer = BundleWriter::create(&bundle_path).unwrap();
+        writer.write_meta(&sample_meta()).unwrap();
+        writer.write_cursor_track(&sample_track(sample_meta().clock_epoch)).unwrap();
+        let reader = BundleReader::open(&bundle_path).unwrap();
+        assert_eq!(reader.read_project(), None, "unedithed bundle must have no project");
+
+        reader.write_project(r#"{"crop":null}"#).unwrap();
+        assert_eq!(reader.read_project().unwrap(), r#"{"crop":null}"#);
+        // Reopening sees the saved project too (it's persisted, not held in
+        // the reader instance).
+        assert_eq!(
+            BundleReader::open(&bundle_path).unwrap().read_project().unwrap(),
+            r#"{"crop":null}"#
+        );
+    }
+
+    #[test]
+    fn writing_project_into_a_packed_dol_preserves_other_entries() {
+        let staging = tempfile::tempdir().unwrap();
+        let bundle_root = staging.path().join("staging.motionrec");
+        let writer = BundleWriter::create(&bundle_root).unwrap();
+        writer.write_meta(&sample_meta()).unwrap();
+        writer.write_cursor_track(&sample_track(sample_meta().clock_epoch)).unwrap();
+        std::fs::write(writer.screen_video_path(), b"fake-video-bytes").unwrap();
+
+        let dest_dir = tempfile::tempdir().unwrap();
+        let dest = dest_dir.path().join("Recording 1.dol");
+        pack_recording(&bundle_root, &dest).unwrap();
+
+        let reader = BundleReader::open(&dest).unwrap();
+        assert!(reader.is_packed());
+        assert_eq!(reader.read_project(), None);
+
+        reader.write_project(r#"{"slices":[]}"#).unwrap();
+        assert_eq!(reader.read_project().unwrap(), r#"{"slices":[]}"#);
+
+        // The recording itself must be untouched by the rewrite: media entry
+        // intact, still Stored, and everything else still readable.
+        let file = std::fs::File::open(&dest).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let mut video = archive.by_name(names::SCREEN_VIDEO).unwrap();
+        assert_eq!(video.compression(), zip::CompressionMethod::Stored);
+        let mut video_bytes = Vec::new();
+        video.read_to_end(&mut video_bytes).unwrap();
+        assert_eq!(video_bytes, b"fake-video-bytes");
+        drop(video);
+        assert_eq!(reader.read_meta().unwrap().fps, 60);
+        assert_eq!(reader.read_cursor_track().unwrap().samples.len(), 1);
     }
 }
