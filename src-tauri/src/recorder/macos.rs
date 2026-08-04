@@ -138,12 +138,18 @@ pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
     cursor::start_on_main_thread(app, clock)?;
 
     let capture_stop = Arc::new(AtomicBool::new(false));
+    // Blank this app's own windows out of display/area captures — the
+    // always-on-top toolbar sits on the screen being recorded, and would
+    // otherwise appear in every full-display recording.
+    let excluded = capture::own_window_targets(app);
     let capture_thread = {
         let capture_stop = Arc::clone(&capture_stop);
         let staging_dir = staging_dir.clone();
         std::thread::Builder::new()
             .name("dolly-capture".into())
-            .spawn(move || run_capture(clock, capture_stop, staging_dir, target, crop_area))
+            .spawn(move || {
+                run_capture(clock, capture_stop, staging_dir, target, crop_area, excluded)
+            })
             .context("failed to spawn capture thread")?
     };
 
@@ -350,9 +356,10 @@ fn run_capture(
     bundle_dir: PathBuf,
     target: scap::Target,
     crop_area: Option<scap::capturer::Area>,
+    excluded: Vec<scap::Target>,
 ) -> Result<CaptureOutcome> {
     let mov_path = bundle_dir.join(names::SCREEN_VIDEO);
-    let mut grabber = FrameGrabber::new(clock, FPS, Some(target), crop_area)?;
+    let mut grabber = FrameGrabber::new(clock, FPS, Some(target), crop_area, Some(excluded))?;
     // `MovWriter` needs frame dimensions up front (for the AVAssetWriter
     // output-settings dict), which aren't known until the first frame
     // arrives — so it's created lazily rather than passed in.

@@ -2,7 +2,7 @@
 
 pub mod capturer;
 pub mod frame;
-mod targets;
+pub mod targets;
 mod utils;
 
 // Helper Methods

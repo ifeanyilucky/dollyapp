@@ -18,3 +18,9 @@ that also surfaces the stream error flag) and `Engine::has_error`; the app's
 `capture::FrameGrabber::run_while` polls with them plus a stall watchdog so
 `recorder::stop` can never hang. Changes in `src/capturer/mod.rs` and
 `src/capturer/engine/mod.rs`.
+
+## Public `targets` module
+
+`Target::Window`'s payload struct lives in the (previously private) `targets`
+module, so the app couldn't construct an exclusion target for its own
+windows. Made `mod targets` public; no behavior change.
