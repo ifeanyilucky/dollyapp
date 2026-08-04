@@ -9,11 +9,13 @@
 //! - The real recorder (`recorder` module) feeds frames straight into
 //!   `encode::MovWriter` for a real `screen.mov`.
 //!
-//! Still deliberately *not* here: `SCStreamConfiguration.showsCursor =
-//! false` + `SCContentFilter` exclusion of Dolly's own windows (`scap`
-//! doesn't expose these knobs; would need a hand-rolled `SCStream` to add
-//! them — see `encode/mod.rs`'s doc comment for why that's a separate,
-//! larger undertaking), and system audio for the same reason.
+//! Not here: system audio (`SCStreamConfiguration.showsAudio`) would need a
+//! hand-rolled `SCStream` rather than scap, so recordings carry video only —
+//! the mic narration and ambient music are captured separately and mixed in
+//! at render/export time. Dolly's own windows *are* excluded from
+//! display/area captures via scap's `excluded_targets` knob →
+//! `SCContentFilter`'s `DisplayExcludingWindows` (see `own_window_targets`),
+//! so the always-on-top toolbar never appears in a recording.
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -28,3 +30,5 @@ pub use targets::{
     resolve_target, scale_factor, target_origin, window_at_cursor, window_at_point, CropArea,
     TargetInfo, TargetKind, WindowHitInfo,
 };
+#[cfg(target_os = "macos")]
+pub use macos::own_window_targets;

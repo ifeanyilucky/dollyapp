@@ -2,6 +2,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
+use objc2::msg_send;
+use objc2::runtime::AnyObject;
 use scap::capturer::{Capturer, Options, RecvError, Resolution};
 use scap::frame::{Frame, FrameType};
 
@@ -50,18 +52,56 @@ pub struct FrameGrabber {
     clock: Clock,
 }
 
+/// The `scap::Target` descriptors for this app's own windows, so a
+/// full-display or area capture can exclude them — `scap`'s `excluded_targets`
+/// becomes `SCContentFilter`'s `DisplayExcludingWindows`, which blanks this
+/// app's own windows out of the recording. The always-on-top toolbar sits
+/// parked over the very display being recorded (at its center, per
+/// `toolbar::show`), so without this every recording would contain it; the
+/// editor "main" window is excluded too in case it's still on screen.
+pub fn own_window_targets(app: &tauri::AppHandle) -> Vec<scap::Target> {
+    use tauri::Manager;
+
+    let mut targets = Vec::new();
+    for window in app.webview_windows().values() {
+        let Ok(ns_window) = window.ns_window() else {
+            continue;
+        };
+        // SAFETY: `ns_window()` returns the window's live `NSWindow*`, owned
+        // by the Tauri window for the duration of this call; `windowNumber`
+        // merely reads a scalar CG window number — the same ID ScreenCaptureKit
+        // exposes on its own window list, which is what the exclusion filter
+        // matches against.
+        let number: isize = unsafe { msg_send![ns_window as *mut AnyObject, windowNumber] };
+        if number <= 0 {
+            continue;
+        }
+        let id = number as u32;
+        targets.push(scap::Target::Window(scap::targets::Window {
+            id,
+            title: window.label().to_string(),
+            raw_handle: id,
+        }));
+    }
+    targets
+}
+
 impl FrameGrabber {
     /// `target`: `None` captures the main display (the sync-spike binary's
     /// use case); the real recorder always passes an explicit target,
     /// resolved from the picker via `capture::resolve_target`. `crop_area`
     /// restricts capture to a sub-rectangle of `target` (PRD §9's "region"
     /// picker) — in `target`'s own point space, i.e. `(0,0)` is always
-    /// `target`'s own top-left, not the global desktop origin.
+    /// `target`'s own top-left, not the global desktop origin. `excluded`
+    /// (only honored for display capture) lists windows to blank out of the
+    /// output — the real recorder passes `own_window_targets` so this app's
+    /// own windows never appear in a recording.
     pub fn new(
         clock: Clock,
         fps: u32,
         target: Option<scap::Target>,
         crop_area: Option<scap::capturer::Area>,
+        excluded: Option<Vec<scap::Target>>,
     ) -> Result<Self> {
         if !scap::has_permission() {
             // The caller is expected to have already walked the user
@@ -78,7 +118,7 @@ impl FrameGrabber {
             target,
             show_cursor: false,
             show_highlight: false,
-            excluded_targets: None,
+            excluded_targets: excluded,
             output_type: FrameType::BGRAFrame,
             output_resolution: Resolution::Captured,
             crop_area,
