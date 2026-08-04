@@ -16,6 +16,10 @@ export interface LoadedRecording {
   /** Counterpart to `screenVideoUrl` for the mic track — `null` when
    * `meta.hasMicAudio` is false. */
   micAudioUrl: string | null;
+  /** The saved editor document (`project.json`) — `null` until the
+   * recording's first edit is saved. Hydrate into `EditorDocument` with
+   * `parseProject` in `document.ts`. */
+  projectJson: string | null;
 }
 
 /** Turns a `LoadedRecording` media field into something a `<video>`/`<audio>`
@@ -37,6 +41,13 @@ export function revealInFinder(bundlePath: string): Promise<void> {
 
 export function deleteRecording(bundlePath: string): Promise<void> {
   return invoke("delete_recording", { bundlePath });
+}
+
+/** Persists the editor document into the recording's `project.json` entry —
+ * `projectJson` is the serialized `EditorDocument` (see `serializeDocument`).
+ * Called on a debounce after edits and on editor close. */
+export function saveProject(bundlePath: string, projectJson: string): Promise<void> {
+  return invoke("save_project", { bundlePath, projectJson });
 }
 
 export interface RecentProject {

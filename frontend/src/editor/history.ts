@@ -111,6 +111,9 @@ export interface UseHistoryResult<T> {
   redo: () => void;
   /** Merges initial data in without creating an undo step. */
   patch: (patch: Partial<T>) => void;
+  /** Replaces the whole history with a single pristine state — used when
+   * loading a recording, so Undo/Redo never carries across recordings. */
+  reset: (state: T) => void;
 }
 
 export function useHistoryState<T>(initial: T): UseHistoryResult<T> {
@@ -122,6 +125,7 @@ export function useHistoryState<T>(initial: T): UseHistoryResult<T> {
   const undo = useCallback(() => dispatch({ type: "undo" }), []);
   const redo = useCallback(() => dispatch({ type: "redo" }), []);
   const patch = useCallback((p: Partial<T>) => dispatch({ type: "patch", patch: p }), []);
+  const reset = useCallback((state: T) => dispatch({ type: "reset", state }), []);
 
   return {
     state: state.present,
@@ -133,5 +137,6 @@ export function useHistoryState<T>(initial: T): UseHistoryResult<T> {
     undo,
     redo,
     patch,
+    reset,
   };
 }

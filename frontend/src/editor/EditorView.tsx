@@ -3,14 +3,14 @@ import { useEffect, useRef, useState } from "react";
 import { DEFAULT_ZOOM_KEYFRAME_EXTRAS, generateZoomKeyframes, splitKeyframeAt, type ZoomKeyframe } from "../motion-engine";
 import { AnimationPanel } from "./AnimationPanel";
 import { aspectRatioPreset } from "./aspect";
-import { deleteRecording, loadRecording, mediaSrc, revealInFinder, type LoadedRecording } from "./api";
+import { deleteRecording, loadRecording, mediaSrc, revealInFinder, saveProject, type LoadedRecording } from "./api";
 import { AudioPanel } from "./AudioPanel";
 import { BackgroundAudioPlayer, decodeAudioFromUrl, getAmbientBuffer, isAmbientTrackId } from "./backgroundAudio";
 import { playClickSound } from "./clickSound";
 import { CropFooter, CropOverlay, CropToolbar } from "./CropEditor";
 import { clampCropRect, fullFrameCrop, isFullFrameCrop, type CropRect } from "./crop";
 import { CursorPanel } from "./CursorPanel";
-import { DEFAULT_DOCUMENT, type EditorDocument } from "./document";
+import { DEFAULT_DOCUMENT, parseProject, serializeDocument, type EditorDocument } from "./document";
 import { exportVideo } from "./exportVideo";
 import { useHistoryState } from "./history";
 import { IconRail, type ToolId } from "./IconRail";
@@ -37,6 +37,11 @@ const FRAME_STEP_S = 1 / 30;
 /** Default level for a zoom clip auto-added by clicking empty space on the
  * timeline's zoom track — see `addZoomKeyframe`. */
 const ADDED_ZOOM_LEVEL = 1.6;
+
+/** How long the editor waits after the last edit before persisting the
+ * document into the bundle's `project.json` — long enough that a flurry of
+ * edits (slider drags, trim handles) saves once, not N times. */
+const AUTOSAVE_DEBOUNCE_MS = 800;
 
 /**
  * Post-recording preview: plays `screen.mov` through the same motion
@@ -133,6 +138,7 @@ export function EditorView({
     undo: undoDoc,
     redo: redoDoc,
     patch: patchDoc,
+    reset: resetDoc,
   } = useHistoryState<EditorDocument>(DEFAULT_DOCUMENT);
   const {
     style,
@@ -180,6 +186,18 @@ export function EditorView({
   // are, but the same "read latest without retriggering an effect" need.
   const audioSettingsRef = useRef(audioSettings);
   audioSettingsRef.current = audioSettings;
+  // Autosave plumbing (see the debounced-save effect below). `dirtyRef`
+  // flips true on the first real user edit and false once that edit (and
+  // everything after it) is safely in `project.json`; it's what lets the
+  // unmount flush know whether there's anything unsaved. `latestDocRef` /
+  // `latestBundlePathRef` give the flush effect a stable way to read the
+  // final document without depending on `doc`/`bundlePath` (which would
+  // re-subscribe the effect on every edit).
+  const dirtyRef = useRef(false);
+  const latestDocRef = useRef<EditorDocument>(doc);
+  latestDocRef.current = doc;
+  const latestBundlePathRef = useRef(bundlePath);
+  latestBundlePathRef.current = bundlePath;
   // Read from `tick` (see the render-loop effect, keyed only on `loaded`)
   // without becoming a dependency of it — same pattern as the refs above,
   // but this one changes on every mouse-move over the timeline, so it
@@ -260,17 +278,27 @@ export function EditorView({
     loadRecording(bundlePath)
       .then((rec) => {
         if (!cancelled) {
+          // A saved document (`project.json`) replaces the whole pristine
+          // state — crop, trim, slices, masks, zoom keyframes, style, ...
+          // — and skips keyframe auto-generation (the saved keyframes are
+          // the source of truth; a fresh recording regenerates them). A
+          // missing/corrupt project falls back to fresh defaults, and
+          // `resetDoc` (rather than `patchDoc`) is used so Undo/Redo never
+          // carries across recordings — this is setup, not a user edit.
+          const saved = rec.projectJson ? parseProject(rec.projectJson) : null;
+          if (saved) {
+            resetDoc(saved);
+          } else {
+            // Generated from the *origin-shifted* track, matching what
+            // `SceneRenderer` builds internally (see its constructor) — a
+            // keyframe's `center` has to land in the same video-local space
+            // the renderer works in, or panning targets the wrong spot for
+            // any window/area recording (non-zero display origin).
+            const origin = { x: rec.meta.display.originX, y: rec.meta.display.originY };
+            const shifted = shiftCursorTrack(rec.cursorTrack, origin);
+            resetDoc({ ...DEFAULT_DOCUMENT, zoomKeyframes: generateZoomKeyframes(shifted, { factor: 1 }) });
+          }
           setLoaded(rec);
-          // Generated from the *origin-shifted* track, matching what
-          // `SceneRenderer` builds internally (see its constructor) — a
-          // keyframe's `center` has to land in the same video-local space
-          // the renderer works in, or panning targets the wrong spot for
-          // any window/area recording (non-zero display origin). Applied
-          // via `patchDoc` (not `setDoc`) — this is initial data arriving,
-          // not a user edit, so it shouldn't be a Redo-able "undo" step.
-          const origin = { x: rec.meta.display.originX, y: rec.meta.display.originY };
-          const shifted = shiftCursorTrack(rec.cursorTrack, origin);
-          patchDoc({ zoomKeyframes: generateZoomKeyframes(shifted, { factor: 1 }) });
         }
       })
       .catch((e: unknown) => {
@@ -279,7 +307,40 @@ export function EditorView({
     return () => {
       cancelled = true;
     };
-  }, [bundlePath, patchDoc]);
+  }, [bundlePath, resetDoc]);
+
+  // Autosave: persist the document into the bundle's `project.json` ~800ms
+  // after the last edit. Gated on undo/redo history being non-empty — that's
+  // the only thing that distinguishes a *user edit* from setup: hydration and
+  // the video-metadata patch go through `reset`/`patch` (no undo step),
+  // every real edit goes through `set`/`setTransient`+`commit`/`undo`/`redo`
+  // (an undo step). Opening a recording and changing nothing therefore never
+  // stamps a `project.json` onto it (ARCHITECTURE.md, "absent until first
+  // edit"), even though `doc` changed during setup.
+  useEffect(() => {
+    if (!canUndo && !canRedo) return;
+    dirtyRef.current = true;
+    const id = window.setTimeout(() => {
+      const json = serializeDocument(latestDocRef.current);
+      saveProject(latestBundlePathRef.current, json)
+        .then(() => {
+          dirtyRef.current = false;
+        })
+        .catch((e) => console.error("autosave failed", e));
+    }, AUTOSAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(id);
+  }, [doc, canUndo, canRedo]);
+
+  // Flush any unsaved edits when the editor is torn down (recording closed
+  // or a different one opened — `App` remounts via `key={openBundlePath}`) —
+  // otherwise the debounce timer would be dropped with the last ~800ms of
+  // work still unpersisted. Ref-only so the effect subscribes once.
+  useEffect(() => {
+    return () => {
+      if (!dirtyRef.current) return;
+      void saveProject(latestBundlePathRef.current, serializeDocument(latestDocRef.current));
+    };
+  }, []);
 
   // While actively re-editing a crop, the renderer needs the *un*cropped
   // recording — `CropOverlay` draws its handles/dimming against the whole
@@ -1415,9 +1476,14 @@ export function EditorView({
         onLoadedMetadata={(e) => {
           const d = e.currentTarget.duration;
           setDuration(d);
-          // Initial data, not a user edit — see `patchDoc`'s doc comment
-          // on the bundle-load effect above.
-          patchDoc({ clipStartS: 0, clipEndS: d, slices: initialSlices(0, d) });
+          // Initial data, not a user edit — see `resetDoc`'s doc comment on
+          // the bundle-load effect above. Guarded on the clip still having
+          // no trim (start >= end): a recording restored from `project.json`
+          // may already carry a saved trim, which must win over this
+          // "whole clip" default.
+          if (clipEndRef.current <= clipStartRef.current) {
+            patchDoc({ clipStartS: 0, clipEndS: d, slices: initialSlices(0, d) });
+          }
         }}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
