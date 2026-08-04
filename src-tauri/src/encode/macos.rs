@@ -138,6 +138,7 @@ impl MovWriter {
         // The handler fires on an AVFoundation internal queue; `recv_timeout`
         // wakes on completion or on the deadline, so a wedged encoder can't
         // hang the capture thread (and therefore the recording) forever.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         match done_rx.recv_timeout(remaining) {
             Ok(()) => {}
