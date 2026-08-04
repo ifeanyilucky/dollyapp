@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -16,6 +16,13 @@ use crate::cursor;
 use crate::encode::MovWriter;
 
 const FPS: u32 = 60;
+
+/// Monotonic per-process counter that disambiguates recording names when two
+/// recordings start within the same wall-clock second. Without it, a stop →
+/// immediate restart could land on the same `Recording N` base name and
+/// silently overwrite the previous recording's `.dol` (and reuse its staging
+/// dir, whose stale `mic.wav` would then fail `hound::WavWriter`).
+static RECORDING_SEQ: AtomicU64 = AtomicU64::new(0);
 
 struct ActiveRecording {
     /// Where capture writes `screen.mov`/`mic.wav` and stop writes
@@ -425,7 +432,14 @@ fn new_bundle_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf)> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let name = format!("Recording {timestamp}");
+    let seq = RECORDING_SEQ.fetch_add(1, Ordering::Relaxed);
+    // The bare name stays clean; only a restart within the same second gets
+    // a numeric suffix so it can't clobber the recording that came before.
+    let name = if seq == 0 {
+        format!("Recording {timestamp}")
+    } else {
+        format!("Recording {timestamp}-{seq}")
+    };
 
     let staging = app
         .path()
@@ -433,6 +447,15 @@ fn new_bundle_paths(app: &AppHandle) -> Result<(PathBuf, PathBuf)> {
         .context("could not resolve the app cache directory")?
         .join("staging")
         .join(format!("{name}.motionrec"));
+
+    // A staging dir with this name could have survived a crash from a
+    // previous app run (the counter only guarantees uniqueness within this
+    // process). `hound::WavWriter` and `AVAssetWriter` both refuse to write
+    // over existing files, so clear any leftovers rather than reuse them.
+    if staging.exists() {
+        std::fs::remove_dir_all(&staging)
+            .with_context(|| format!("removing stale staging dir {}", staging.display()))?;
+    }
 
     Ok((staging, base.join(format!("{name}.dol"))))
 }

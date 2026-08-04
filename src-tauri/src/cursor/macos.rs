@@ -185,6 +185,14 @@ pub fn mark_resume_on_main_thread(app: &tauri::AppHandle, t: u64) -> Result<()> 
 const SAMPLE_INTERVAL: Duration =
     Duration::from_micros(1_000_000 / CursorTrack::SAMPLE_RATE_HZ as u64);
 
+/// Height of the main display in CG global point-space (the same space the
+/// sampler's `CGEvent::location` uses). The global-monitor block needs this
+/// to mirror AppKit screen-coordinate y (bottom-left origin, y-up) into the
+/// top-left-origin, y-down space the position stream and video pixels use.
+fn main_display_height_points() -> f64 {
+    core_graphics::display::CGDisplay::main().bounds().size.height
+}
+
 fn run_sampler(clock: Clock, samples: Arc<Mutex<Vec<CursorSample>>>, stop_flag: Arc<AtomicBool>) {
     // A source is required by the API but doesn't gate what `.location()`
     // reports — CGEventCreate always reflects the live HID pointer state.
@@ -236,31 +244,24 @@ fn install_global_monitor(
         let t = clock.now_us();
         // For a globally monitored event there's no associated window, and
         // AppKit documents `locationInWindow` as screen coordinates in that
-        // case — this is not a bug, just an overloaded accessor name.
+        // case — with the AppKit screen-space origin at the bottom-left of
+        // the main display and y increasing *up*, which is vertically
+        // mirrored from the position stream's space (the sampler's
+        // `CGEvent::location`, and the video pixels, both use the global
+        // display coordinate space: top-left origin, y increasing down).
+        // Mirror the y so click/scroll anchors land in the same space as
+        // the samples the motion engine clusters them with; x is aligned
+        // between the two spaces already.
         let point = unsafe { event.locationInWindow() };
+        let x = point.x;
+        let y = main_display_height_points() - point.y;
         let kind = unsafe { event.r#type() };
 
         let recorded = match kind {
-            NSEventType::LeftMouseDown => Some(CursorEvent::LeftDown {
-                t,
-                x: point.x,
-                y: point.y,
-            }),
-            NSEventType::LeftMouseUp => Some(CursorEvent::LeftUp {
-                t,
-                x: point.x,
-                y: point.y,
-            }),
-            NSEventType::RightMouseDown => Some(CursorEvent::RightDown {
-                t,
-                x: point.x,
-                y: point.y,
-            }),
-            NSEventType::RightMouseUp => Some(CursorEvent::RightUp {
-                t,
-                x: point.x,
-                y: point.y,
-            }),
+            NSEventType::LeftMouseDown => Some(CursorEvent::LeftDown { t, x, y }),
+            NSEventType::LeftMouseUp => Some(CursorEvent::LeftUp { t, x, y }),
+            NSEventType::RightMouseDown => Some(CursorEvent::RightDown { t, x, y }),
+            NSEventType::RightMouseUp => Some(CursorEvent::RightUp { t, x, y }),
             NSEventType::KeyDown => {
                 let code = unsafe { event.keyCode() };
                 let flags = unsafe { event.modifierFlags() };

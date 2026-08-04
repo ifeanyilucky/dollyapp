@@ -9,8 +9,8 @@ use anyhow::{anyhow, Result};
 // (incompatible) `Retained`/`Message`.
 use objc2_av_foundation::{
     AVAssetWriter, AVAssetWriterInput, AVAssetWriterInputPixelBufferAdaptor,
-    AVFileTypeQuickTimeMovie, AVMediaTypeVideo, AVVideoCodecKey, AVVideoCodecTypeH264,
-    AVVideoHeightKey, AVVideoWidthKey,
+    AVAssetWriterStatus, AVFileTypeQuickTimeMovie, AVMediaTypeVideo, AVVideoCodecKey,
+    AVVideoCodecTypeH264, AVVideoHeightKey, AVVideoWidthKey,
 };
 use objc2_avf::rc::Retained;
 use objc2_avf::runtime::AnyObject;
@@ -94,8 +94,17 @@ impl MovWriter {
         }
 
         // Encoding should comfortably keep up with 60fps; this is a safety
-        // valve, not the expected steady state.
+        // valve, not the expected steady state. Still bounded — a wedged
+        // encoder (backpressure that never clears) must surface as an error,
+        // not freeze the capture thread in a loop forever.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while !unsafe { self.input.isReadyForMoreMediaData() } {
+            if std::time::Instant::now() > deadline {
+                let err = unsafe { self.writer.error() };
+                return Err(anyhow!(
+                    "timed out waiting for the encoder to drain: {err:?}"
+                ));
+            }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
 
@@ -113,13 +122,37 @@ impl MovWriter {
 
     pub fn finish(self) -> Result<()> {
         unsafe { self.input.markAsFinished() };
-        // Deprecated in favor of the completion-handler variant, but
-        // documented as safe to block on from a non-main thread — which is
-        // exactly where this always runs (see the struct doc comment) —
-        // and it avoids another block2/channel bridge for a one-shot call.
-        #[allow(deprecated)]
-        let ok = unsafe { self.writer.finishWriting() };
-        if !ok {
+
+        // The deprecated synchronous `finishWriting` can block indefinitely
+        // if the encoder wedges; instead call the completion-handler variant
+        // and wait on a one-shot channel with a deadline. The handler is
+        // invoked exactly once when writing finishes (or fails) — an mpsc
+        // channel is a clean rendezvous and needs no extra bridging, unlike
+        // the discarded block param of the old API.
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let handler = block2_avf::RcBlock::new(move || {
+            let _ = done_tx.send(());
+        });
+        unsafe { self.writer.finishWritingWithCompletionHandler(&handler) };
+
+        // The handler fires on an AVFoundation internal queue; `recv_timeout`
+        // wakes on completion or on the deadline, so a wedged encoder can't
+        // hang the capture thread (and therefore the recording) forever.
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        match done_rx.recv_timeout(remaining) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let err = unsafe { self.writer.error() };
+                return Err(anyhow!("timed out finishing screen.mov: {err:?}"));
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(anyhow!("finish callback dropped without firing"));
+            }
+        }
+
+        // A failed writer still calls the completion handler, so success is
+        // determined from `status`, not from the handler firing.
+        if unsafe { self.writer.status() } != AVAssetWriterStatus::Completed {
             let err = unsafe { self.writer.error() };
             return Err(anyhow!("failed to finish writing screen.mov: {err:?}"));
         }
