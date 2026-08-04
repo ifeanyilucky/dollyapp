@@ -773,6 +773,12 @@ export function EditorView({
       // PreviewControls buttons) funnels through this one function, so one
       // resume call here covers all of them.
       if (audioCtxRef.current?.state === "suspended") void audioCtxRef.current.resume();
+      // Clear any lingering timeline hover-scrub preview — `handlePreviewSeek`
+      // refuses to update it while playing (see below), so a play started
+      // with the mouse still over the track would otherwise leave `tick`
+      // pinning the video to the stale hovered frame and playback would be
+      // stuck there until the mouse leaves.
+      setPreviewTimeS(null);
       // Respect the clip in/out: never resume from before `clipStartS`, and
       // restart from the top if playback had already reached the end.
       if (clipEndS > 0 && video.currentTime >= clipEndS) video.currentTime = clipStartS;

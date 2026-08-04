@@ -56,7 +56,19 @@ export function resizeSlices(slices: ClipSlice[], clipStartS: number, clipEndS: 
   const sorted = [...slices].sort((a, b) => a.startS - b.startS);
   sorted[0] = { ...sorted[0], startS: clipStartS };
   sorted[sorted.length - 1] = { ...sorted[sorted.length - 1], endS: clipEndS };
-  return sorted.filter((s) => s.endS - s.startS >= MIN_SLICE_SECONDS);
+  const resized = sorted.filter((s) => s.endS - s.startS >= MIN_SLICE_SECONDS);
+  if (resized.length === 0) return initialSlices(clipStartS, clipEndS);
+  // The filter above can drop an edge sliver (e.g. a trim moved the clip's
+  // start past the second slice's start), which would leave a gap and
+  // break the "slices always tile the clip" invariant — re-anchor the
+  // surviving first/last slice to the clip's exact edges so coverage stays
+  // contiguous. Re-anchoring only ever lengthens a slice, so it can't
+  // re-introduce a sub-minimum sliver.
+  if (resized[0].startS !== clipStartS) resized[0] = { ...resized[0], startS: clipStartS };
+  if (resized[resized.length - 1].endS !== clipEndS) {
+    resized[resized.length - 1] = { ...resized[resized.length - 1], endS: clipEndS };
+  }
+  return resized;
 }
 
 /** Splits whichever slice contains `atS` into two, both keeping the

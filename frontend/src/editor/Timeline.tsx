@@ -544,8 +544,13 @@ export function Timeline({
   }
 
   function handleZoomClick(e: React.MouseEvent, index: number) {
-    if (!splitArmed) return; // plain click-to-select is handled by the move handle's `onClick`
+    // The move handle's `beginDrag` already handles plain click-to-select
+    // (select + seek in its own `onClick`). Stop the click here so it can't
+    // also bubble up to the track's `handleTrackClick` — that would seek
+    // twice on a click, and would scrub the playhead to the drop position
+    // after a move-drag (the drag itself is complete by the time this fires).
     e.stopPropagation();
+    if (!splitArmed) return;
     onSplitZoomKeyframe(index, secondsAtClientX(e.clientX) * 1e6 + videoStartUs);
   }
 
@@ -951,6 +956,7 @@ export function Timeline({
                   style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                   title={`${mask.type === "sensitive" ? "Sensitive data mask" : "Highlight mask"} ${formatTime(mask.startS)}–${formatTime(mask.endS)}${mask.disabled ? " (disabled)" : ""}`}
                   onPointerDown={(e) => handleMaskMove(e, mask)}
+                  onClick={(e) => e.stopPropagation()}
                 >
                   {maskFocused && widthPct > 8 ? (mask.type === "sensitive" ? "Sensitive" : "Highlight") : ""}
                   <div
