@@ -218,7 +218,7 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
     filters: [{ name: "Video", extensions: [container.extension] }],
   });
   if (!dest) return null;
-  await setExportDestination(dest);
+  await setExportDestination(dest, bundleDir);
 
   canvas.width = width;
   canvas.height = height;

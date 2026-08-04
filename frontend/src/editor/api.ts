@@ -53,9 +53,12 @@ export function listRecentProjects(limit: number): Promise<RecentProject[]> {
 
 /** Records where the rendered export file should be written — paired with
  * `writeExportFile`, since the bytes themselves travel as a raw invoke body
- * (no room for a second path argument there). */
-export function setExportDestination(path: string): Promise<void> {
-  return invoke("export_set_destination", { path });
+ * (no room for a second path argument there). `openDir` is the directory of
+ * the recording currently being edited, so the export location boundary the
+ * backend enforces (recordings folder + app cache + this folder) always
+ * covers the save dialog's default. */
+export function setExportDestination(path: string, openDir?: string): Promise<void> {
+  return invoke("export_set_destination", { path, openDir });
 }
 
 /** Writes the raw export bytes to the path previously set with
