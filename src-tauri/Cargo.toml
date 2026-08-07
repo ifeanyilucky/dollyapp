@@ -72,6 +72,17 @@ objc2-core-foundation = "0.3"
 # Mic capture (AVAudioEngine). Same objc2 0.6 generation as objc2-av-foundation
 # above — kept self-contained in src-tauri/src/audio for the same reason.
 objc2-avf-audio = { version = "0.3", default-features = false, features = ["AVAudioEngine", "AVAudioIONode", "AVAudioNode", "AVAudioBuffer", "AVAudioFormat", "AVAudioTime", "AVAudioTypes", "block2"] }
+# System audio capture (ScreenCaptureKit `SCStream` audio output). Same objc2
+# 0.6 generation again. `SCStreamOutput`'s callback method only exists under
+# the `objc2-core-media` feature (it takes a `CMSampleBuffer`); the sample
+# handler queue needs `dispatch2`.
+objc2-screen-capture-kit = { version = "0.3", default-features = false, features = ["SCStream", "SCShareableContent", "block2", "dispatch2", "objc2-core-media"] }
+# `objc2-screen-capture-kit` uses `DispatchQueue` in `addStreamOutput:...` but
+# doesn't re-export it — pull in the crate directly to name the type.
+dispatch2 = "0.3"
+# `AudioBufferList`/`AudioStreamBasicDescription`/`kAudioFormat*` live in
+# objc2-core-audio-types, which objc2-core-media doesn't re-export.
+objc2-core-audio-types = "0.3"
 # Pure-Rust WAV writer — sidesteps AVAudioFile's own FFI surface (NSURL,
 # settings dictionaries) entirely; we already have raw float samples once
 # the tap block fires.

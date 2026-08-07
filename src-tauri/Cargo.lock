@@ -848,6 +848,7 @@ dependencies = [
  "block2 0.5.1",
  "block2 0.6.2",
  "core-graphics 0.24.0",
+ "dispatch2",
  "hound",
  "http",
  "http-range",
@@ -858,11 +859,13 @@ dependencies = [
  "objc2-app-kit 0.2.2",
  "objc2-av-foundation",
  "objc2-avf-audio",
+ "objc2-core-audio-types",
  "objc2-core-foundation",
  "objc2-core-media",
  "objc2-core-video",
  "objc2-foundation 0.2.2",
  "objc2-foundation 0.3.2",
+ "objc2-screen-capture-kit",
  "percent-encoding",
  "scap",
  "serde",
@@ -2690,6 +2693,19 @@ dependencies = [
  "bitflags 2.13.1",
  "objc2 0.6.4",
  "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
+name = "objc2-screen-capture-kit"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74b7c5390f477482f001bc354d6571a70db7e4f8d5288e860c45521fbce11394"
+dependencies = [
+ "block2 0.6.2",
+ "dispatch2",
+ "objc2 0.6.4",
+ "objc2-core-media",
  "objc2-foundation 0.3.2",
 ]
 
