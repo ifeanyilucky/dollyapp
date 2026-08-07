@@ -15,9 +15,16 @@ import {
   X,
 } from "lucide-react";
 import { forwardRef, useEffect, useState } from "react";
-import { getMicrophoneStatus, openMicrophoneSettings, requestMicrophonePermission } from "../permissions/api";
+import {
+  getMicrophoneStatus,
+  getScreenRecordingStatus,
+  openMicrophoneSettings,
+  openScreenRecordingSettings,
+  requestMicrophonePermission,
+  requestScreenRecordingPermission,
+} from "../permissions/api";
 import { openSettingsWindow } from "../settings/api";
-import { setMicEnabled } from "./api";
+import { setMicEnabled, setSystemAudioEnabled } from "./api";
 import {
   AREA_SELECTED_EVENT,
   listCaptureTargets,
@@ -50,10 +57,9 @@ interface WindowSelectedPayload {
  * already-fixed capture target) — source/device picker (full display, a
  * specific window, a custom-dragged area, or not built, a connected
  * device), camera/mic/system-audio toggles, and the start-recording
- * button. Mic is real; camera and system audio aren't implemented
+ * button. Mic and system audio are real; camera isn't implemented
  * anywhere in the capture pipeline yet (see `recorder::start`'s doc
- * comment), so those two stay visibly inert rather than pretending to
- * work.
+ * comment), so it stays visibly inert rather than pretending to work.
  */
 export function SourcePickerBar({
   disabled,
@@ -73,6 +79,8 @@ export function SourcePickerBar({
   const [areaLabel, setAreaLabel] = useState<string | null>(null);
   const [micEnabled, setMicEnabledState] = useState(false);
   const [micDeniedHint, setMicDeniedHint] = useState(false);
+  const [systemAudioEnabled, setSystemAudioEnabledState] = useState(false);
+  const [systemAudioDeniedHint, setSystemAudioDeniedHint] = useState(false);
 
   useEffect(() => {
     void listCaptureTargets().then(setTargets);
@@ -125,6 +133,11 @@ export function SourcePickerBar({
       setMicDeniedHint(false);
       await setMicEnabled(false);
     }
+    if (systemAudioEnabled) {
+      setSystemAudioEnabledState(false);
+      setSystemAudioDeniedHint(false);
+      await setSystemAudioEnabled(false);
+    }
     await selectCaptureTarget(null);
   }
 
@@ -144,6 +157,27 @@ export function SourcePickerBar({
     setMicDeniedHint(false);
     setMicEnabledState(true);
     await setMicEnabled(true);
+  }
+
+  // System audio uses the same Screen Recording permission as video capture
+  // (SCK's `SCStream` audio output), so this reuses that request flow rather
+  // than having its own.
+  async function toggleSystemAudio() {
+    if (systemAudioEnabled) {
+      setSystemAudioEnabledState(false);
+      setSystemAudioDeniedHint(false);
+      await setSystemAudioEnabled(false);
+      return;
+    }
+    const status = await getScreenRecordingStatus();
+    const granted = status === "authorized" || (await requestScreenRecordingPermission());
+    if (!granted) {
+      setSystemAudioDeniedHint(true);
+      return;
+    }
+    setSystemAudioDeniedHint(false);
+    setSystemAudioEnabledState(true);
+    await setSystemAudioEnabled(true);
   }
 
   return (
@@ -233,10 +267,10 @@ export function SourcePickerBar({
         <ToggleChip
           icon={MonitorSpeaker}
           offIcon={MonitorSpeaker}
-          label="No system audio"
-          enabled={false}
-          disabled
-          title="Not built yet"
+          label={systemAudioEnabled ? "System audio" : "No system audio"}
+          enabled={systemAudioEnabled}
+          disabled={disabled}
+          onClick={() => void toggleSystemAudio()}
         />
 
         <div className="mx-1 h-8 w-px bg-neutral-800" />
@@ -286,6 +320,15 @@ export function SourcePickerBar({
           className="text-xs text-amber-400 underline underline-offset-2"
         >
           Microphone access denied — enable in System Settings
+        </button>
+      )}
+      {systemAudioDeniedHint && (
+        <button
+          type="button"
+          onClick={() => void openScreenRecordingSettings()}
+          className="text-xs text-amber-400 underline underline-offset-2"
+        >
+          Screen Recording access denied — enable in System Settings
         </button>
       )}
     </div>

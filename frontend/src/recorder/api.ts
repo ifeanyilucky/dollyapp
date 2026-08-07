@@ -60,6 +60,13 @@ export function setMicEnabled(enabled: boolean): Promise<void> {
   return invoke("set_mic_enabled", { enabled });
 }
 
+/** Only marks the toggle — system audio rides on the Screen Recording
+ * permission the video capture already required, so there's no separate
+ * request flow for it. */
+export function setSystemAudioEnabled(enabled: boolean): Promise<void> {
+  return invoke("set_system_audio_enabled", { enabled });
+}
+
 /** Hides the floating toolbar (Escape, or the toolbar's close button). The
  * app keeps running in the background — the tray menu's "Show Toolbar"
  * brings it back. */
