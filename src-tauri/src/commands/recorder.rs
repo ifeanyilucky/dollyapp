@@ -58,6 +58,13 @@ pub fn set_mic_enabled(state: State<'_, RecorderState>, enabled: bool) {
     recorder::set_mic_enabled(&state, enabled);
 }
 
+/// System audio rides on the Screen Recording permission the video capture
+/// already required, so there's no extra permission flow to gate this on.
+#[tauri::command]
+pub fn set_system_audio_enabled(state: State<'_, RecorderState>, enabled: bool) {
+    recorder::set_system_audio_enabled(&state, enabled);
+}
+
 /// Called once, by `PermissionsGate`'s `onGranted`, right after Screen
 /// Recording permission is granted for the first time — hides the regular
 /// window (which was showing the permission flow) and shows the floating

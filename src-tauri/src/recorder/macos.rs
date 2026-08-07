@@ -7,7 +7,7 @@ use anyhow::{anyhow, Context, Result};
 use tauri::{AppHandle, Emitter, Manager};
 
 use super::RECORDING_STATE_EVENT;
-use crate::audio::MicRecorder;
+use crate::audio::{MicRecorder, SystemAudioRecorder};
 use crate::bundle::container::pack_recording;
 use crate::bundle::{names, BundleWriter, DisplayInfo, RecordingMeta};
 use crate::capture::{self, FrameGrabber};
@@ -53,6 +53,10 @@ struct ActiveRecording {
     /// entirely inside its own dedicated thread, never touching this
     /// struct) — see `audio::macos`'s doc comment.
     mic: Option<MicRecorder>,
+    /// `None` if system audio recording wasn't enabled for this recording.
+    /// Same "dedicated thread, plain `Send` data" shape as `mic` — see
+    /// `audio::system`'s doc comment.
+    system_audio: Option<SystemAudioRecorder>,
 }
 
 struct CaptureOutcome {
@@ -83,6 +87,10 @@ pub struct RecorderState {
     /// Opt-in, read at the next `start()` — never enabled implicitly, per
     /// the lazy-permission-request rule (ARCHITECTURE.md, "Permissions").
     mic_enabled: Mutex<bool>,
+    /// Same opt-in as `mic_enabled`, for the system audio track. Uses the
+    /// Screen Recording permission the video capture already has, so the
+    /// frontend doesn't need a separate request flow for it.
+    system_audio_enabled: Mutex<bool>,
 }
 
 pub fn is_recording(state: &RecorderState) -> bool {
@@ -110,6 +118,12 @@ pub fn set_selected_area(state: &RecorderState, area: Option<capture::CropArea>)
 /// doesn't check or request permission itself.
 pub fn set_mic_enabled(state: &RecorderState, enabled: bool) {
     *state.mic_enabled.lock().unwrap() = enabled;
+}
+
+/// Records the user's system-audio toggle. No separate permission flow: it
+/// rides on the Screen Recording grant the video capture already required.
+pub fn set_system_audio_enabled(state: &RecorderState, enabled: bool) {
+    *state.system_audio_enabled.lock().unwrap() = enabled;
 }
 
 pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
@@ -167,6 +181,20 @@ pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
         None
     };
 
+    let system_audio = if *state.system_audio_enabled.lock().unwrap() {
+        match SystemAudioRecorder::start(staging_dir.join(names::SYSTEM_AUDIO)) {
+            Ok(rec) => Some(rec),
+            Err(e) => {
+                // Same degradation as mic: losing the system audio track is
+                // a smaller problem than losing the recording.
+                tracing::error!("failed to start system audio capture: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     *guard = Some(ActiveRecording {
         staging_dir,
         dol_path,
@@ -177,6 +205,7 @@ pub fn start(app: &AppHandle, state: &RecorderState) -> Result<()> {
         capture_stop,
         capture_thread: Some(capture_thread),
         mic,
+        system_audio,
     });
     drop(guard);
 
@@ -220,6 +249,18 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
         None => false,
     };
 
+    // Same non-fatal treatment as the mic track.
+    let has_system_audio = match active.system_audio {
+        Some(rec) => match rec.stop() {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::error!("failed to finalize system audio recording: {e}");
+                false
+            }
+        },
+        None => false,
+    };
+
     let cursor_track = cursor::stop_on_main_thread(app).await?;
 
     let writer = BundleWriter::create(&active.staging_dir)?;
@@ -237,7 +278,7 @@ pub async fn stop(app: &AppHandle, state: &RecorderState) -> Result<PathBuf> {
         },
         duration_us: active.clock.now_us(),
         has_webcam: false,
-        has_system_audio: false,
+        has_system_audio,
         has_mic_audio,
         fps: FPS,
     })?;
