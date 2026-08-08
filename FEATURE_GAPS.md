@@ -80,12 +80,16 @@ settings). CursorClip and CleanShot X too. Dolly: MP4/WebM only
 (`exportVideo.ts:60-72`); `gifski` listed in ARCHITECTURE.md but never wired.
 Follows from the native export pipeline.
 
-### Keyboard shortcut display — PARTIAL (capture only)
+### Keyboard shortcut display — DONE
 Screen Studio records keystrokes and renders them in the video, with a dedicated
 timeline, per-key visibility, and a hide-all option. Dolly captures key *codes*
-only (`src-tauri/src/cursor/macos.rs:231-289`) and never renders them — no
-keystroke/shortcut overlay anywhere in the frontend. The codes are already there;
-rendering is the missing half.
+only (`src-tauri/src/cursor/macos.rs:231-289`) — the missing half, rendering,
+is now built: the Shortcuts panel (`frontend/src/editor/KeystrokesPanel.tsx`)
+renders recent recorded key presses as on-screen modifier+key chips over the
+video (`renderer.ts`'s `drawKeystrokes`, `keycodeMap.ts`'s macOS virtual-keycode
+table), with enable/position/size/max-keys/duration controls, persisted in
+`project.json`, and rendered in both preview and export. A dedicated keystroke
+timeline (per-key visibility/hide-all) is not built.
 
 ### Transcript + captions — MISSING
 Screen Studio generates on-device transcripts (Apple Speech Recognition) and
