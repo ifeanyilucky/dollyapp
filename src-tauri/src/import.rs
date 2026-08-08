@@ -42,6 +42,18 @@ pub fn is_importable(path: &Path) -> bool {
 /// path. `video_path` must be an importable video file (see
 /// `ACCEPTED_EXTENSIONS`).
 pub fn import_video(app: &AppHandle, video_path: &str) -> Result<PathBuf> {
+    let cache = app
+        .path()
+        .app_cache_dir()
+        .context("could not resolve the app cache directory")?;
+    let recordings = projects::recordings_dir(app)?;
+    import_video_into(&cache, &recordings, video_path)
+}
+
+/// The full import pipeline, parameterized over the two directories it needs
+/// (staging scratch space and the `~/Movies/Dolly` destination) so tests can
+/// point both at temp dirs instead of a live `AppHandle`.
+pub fn import_video_into(cache_dir: &Path, recordings_dir: &Path, video_path: &str) -> Result<PathBuf> {
     let src = Path::new(video_path);
     if !src.is_file() {
         bail!("{} is not a file", src.display());
@@ -60,7 +72,7 @@ pub fn import_video(app: &AppHandle, video_path: &str) -> Result<PathBuf> {
         fps,
     } = read_video_metadata(src)?;
 
-    let base = projects::recordings_dir(app)?;
+    let base = recordings_dir.to_path_buf();
     std::fs::create_dir_all(&base)
         .with_context(|| format!("creating {}", base.display()))?;
     let name = unique_name(&base, &import_name(src));
@@ -68,11 +80,7 @@ pub fn import_video(app: &AppHandle, video_path: &str) -> Result<PathBuf> {
 
     // Stage as a loose `.motionrec` dir (the same shape a real recording's
     // staging dir is), then pack it to `.dol` and drop the staging dir.
-    let cache = app
-        .path()
-        .app_cache_dir()
-        .context("could not resolve the app cache directory")?;
-    let staging = cache
+    let staging = cache_dir
         .join("import-staging")
         .join(format!("{name}.motionrec"));
     if staging.exists() {
@@ -201,4 +209,114 @@ fn unique_name(dir: &Path, base: &str) -> String {
         }
     }
     unreachable!()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::capture::CapturedFrame;
+    use crate::encode::MovWriter;
+    use crate::fs::BundleReader;
+
+    fn frame_at(t_us: u64, width: u32, height: u32) -> CapturedFrame {
+        CapturedFrame {
+            t: t_us,
+            width,
+            height,
+            bgra: vec![0u8; (width * height * 4) as usize],
+        }
+    }
+
+    /// Writes a real 320x240 H.264 QuickTime movie, ~30fps for 1s, using the
+    /// same `AVAssetWriter` path the recorder itself uses — so the import
+    /// test exercises `read_video_metadata` against genuine encoded media.
+    fn sample_video(path: &Path) {
+        let width = 320u32;
+        let height = 240u32;
+        let mut writer = MovWriter::create(path, width, height).unwrap();
+        for i in 0..30 {
+            writer.append(&frame_at(i * 33_333, width, height)).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+
+    #[test]
+    fn imports_a_video_into_a_round_trippable_dol() {
+        let video = tempfile::tempdir().unwrap();
+        let video_path = video.path().join("clip.mp4");
+        sample_video(&video_path);
+
+        let cache = tempfile::tempdir().unwrap();
+        let recordings = tempfile::tempdir().unwrap();
+
+        let dol = import_video_into(
+            cache.path(),
+            recordings.path(),
+            video_path.to_str().unwrap(),
+        )
+        .unwrap();
+
+        assert!(dol.is_file(), "bundle written at {}", dol.display());
+        assert!(dol.file_name().unwrap().to_string_lossy().starts_with("clip"));
+
+        let reader = BundleReader::open(&dol).unwrap();
+        assert!(reader.is_packed());
+
+        let meta = reader.read_meta().unwrap();
+        assert_eq!(meta.display.width_px, 320);
+        assert_eq!(meta.display.height_px, 240);
+        assert!(!meta.has_webcam, "an imported video has no webcam track");
+        assert!(!meta.has_system_audio, "an imported video has no system audio");
+        assert!(!meta.has_mic_audio, "an imported video has no mic track");
+        assert_eq!(meta.video_start_us, 0, "the whole file is video, nothing before it");
+        assert_eq!(meta.clock_epoch, 0, "imports have no shared recording clock");
+        assert!(
+            (900_000..1_100_000).contains(&meta.duration_us),
+            "expected ~1s duration, got {}us",
+            meta.duration_us
+        );
+        assert!(
+            (25..=35).contains(&meta.fps),
+            "expected ~30fps, got {}",
+            meta.fps
+        );
+
+        assert!(
+            reader.read_cursor_track().unwrap().samples.is_empty(),
+            "imported bundles carry an empty cursor track"
+        );
+        assert!(reader.read_project().is_none(), "never-edited import has no project");
+        assert!(
+            reader.screen_video_url().starts_with("dol://"),
+            "packed imports must be served over dol://, got {}",
+            reader.screen_video_url()
+        );
+    }
+
+    #[test]
+    fn reimporting_the_same_file_gets_a_numeric_suffix() {
+        let video = tempfile::tempdir().unwrap();
+        let video_path = video.path().join("clip.mp4");
+        sample_video(&video_path);
+
+        let cache = tempfile::tempdir().unwrap();
+        let recordings = tempfile::tempdir().unwrap();
+
+        let first =
+            import_video_into(cache.path(), recordings.path(), video_path.to_str().unwrap()).unwrap();
+        let second =
+            import_video_into(cache.path(), recordings.path(), video_path.to_str().unwrap()).unwrap();
+
+        assert_ne!(first, second, "a re-import must not clobber the first bundle");
+        assert!(
+            first.file_name().unwrap().to_string_lossy().starts_with("clip"),
+            "got {}",
+            first.display()
+        );
+        assert!(
+            second.file_name().unwrap().to_string_lossy().starts_with("clip 1"),
+            "got {}",
+            second.display()
+        );
+    }
 }
