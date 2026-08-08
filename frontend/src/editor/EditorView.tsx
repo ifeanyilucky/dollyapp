@@ -68,6 +68,7 @@ export function EditorView({
   bundlePath,
   onClose,
   onOpenProject,
+  onImportVideo,
 }: {
   bundlePath: string;
   onClose: () => void;
@@ -76,6 +77,9 @@ export function EditorView({
    * (e.g. `key={bundlePath}`) rather than have it hot-swap in place, so
    * every piece of per-recording state below resets cleanly. */
   onOpenProject: (bundlePath: string) => void;
+  /** Imports a foreign video file into a new recording bundle (folder
+   * dropdown's "Import video…") — the parent opens the result. */
+  onImportVideo: () => void;
 }) {
   const [loaded, setLoaded] = useState<LoadedRecording | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1366,6 +1370,7 @@ export function EditorView({
         onRedo={handleRedo}
         onRevealInFinder={() => void revealInFinder(bundlePath)}
         onOpenProject={onOpenProject}
+        onImportVideo={onImportVideo}
         onDelete={() => void handleDelete()}
         onClose={onClose}
       />

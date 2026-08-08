@@ -38,6 +38,12 @@ export function loadRecording(bundlePath: string): Promise<LoadedRecording> {
   return invoke("load_recording", { bundlePath });
 }
 
+/** Imports a foreign video file (`.mp4`/`.mov`/...) into a Dolly recording
+ * bundle, returning the new bundle path ready for `loadRecording`/opening. */
+export function importVideo(videoPath: string): Promise<string> {
+  return invoke("import_video", { videoPath });
+}
+
 export function revealInFinder(bundlePath: string): Promise<void> {
   return invoke("reveal_in_finder", { bundlePath });
 }

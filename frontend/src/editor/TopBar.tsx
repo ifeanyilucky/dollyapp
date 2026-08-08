@@ -62,6 +62,7 @@ export function TopBar({
   onUndo,
   onRedo,
   onRevealInFinder,
+  onImportVideo,
   onOpenProject,
   onDelete,
   onClose,
@@ -105,6 +106,9 @@ export function TopBar({
   onUndo: () => void;
   onRedo: () => void;
   onRevealInFinder: () => void;
+  /** Opens a file picker for a foreign video (`.mp4`/`.mov`/...) and imports
+   * it as a new recording bundle. */
+  onImportVideo: () => void;
   /** Switches the editor to a different past recording (from the folder
    * dropdown's "Show previous projects" submenu) — a no-op if it's already
    * the one being edited. */
@@ -149,6 +153,11 @@ export function TopBar({
               <DropdownMenu.Item className="folder-item" onSelect={onRevealInFinder}>
                 <Folder className="h-3.5 w-3.5" />
                 Reveal in Finder
+              </DropdownMenu.Item>
+
+              <DropdownMenu.Item className="folder-item" onSelect={onImportVideo}>
+                <Upload className="h-3.5 w-3.5" />
+                Import video…
               </DropdownMenu.Item>
 
               <DropdownMenu.Sub>
