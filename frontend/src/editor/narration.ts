@@ -1,21 +1,24 @@
 /**
- * Microphone narration playback — the recorded `mic.wav` track (see
- * `RecordingMeta.hasMicAudio`/`LoadedRecording.micAudioUrl`), decoded once
- * and played in lockstep with the main video, in both the live preview
- * (`EditorView`) and export (`exportVideo.ts`) — same "preview and export
- * must never diverge" principle as everything else in the editor.
+ * Recorded-clip audio playback — the mic narration (`mic.wav`, see
+ * `RecordingMeta.hasMicAudio`/`LoadedRecording.micAudioUrl`) and system
+ * audio (`system.wav`, see `RecordingMeta.hasSystemAudio`/
+ * `LoadedRecording.systemAudioUrl`), decoded once each and played in
+ * lockstep with the main video, in both the live preview (`EditorView`)
+ * and export (`exportVideo.ts`) — same "preview and export must never
+ * diverge" principle as everything else in the editor. One `ClipAudioPlayer`
+ * per recorded track; they differ only in which file/settings they're fed.
  *
- * Sync assumption: mic capture is started essentially at the same instant
- * as screen capture (see `src-tauri/src/recorder/macos.rs`'s `start()` —
- * both are kicked off from the same synchronous call, with no measured
- * offset recorded the way `RecordingMeta.videoStartUs` measures the screen
- * capture's *own* startup latency). `NarrationPlayer` therefore treats
- * `mic.wav`'s frame 0 as aligned with the video's own frame 0; if that
- * unmeasured gap is ever non-negligible in practice, real-world sync will
- * be off by however long it actually was. `resyncIfDrifted` is a separate,
- * narrower safety net — it only corrects for the two independent playback
- * clocks (`HTMLMediaElement` vs `AudioContext`) creeping apart over a long
- * playback, not for that initial fixed offset.
+ * Sync assumption: mic/system capture is started essentially at the same
+ * instant as screen capture (see `src-tauri/src/recorder/macos.rs`'s
+ * `start()` — all are kicked off from the same synchronous call, with no
+ * measured offset recorded the way `RecordingMeta.videoStartUs` measures
+ * the screen capture's *own* startup latency). `ClipAudioPlayer` therefore
+ * treats each track's frame 0 as aligned with the video's own frame 0; if
+ * that unmeasured gap is ever non-negligible in practice, real-world sync
+ * will be off by however long it actually was. `resyncIfDrifted` is a
+ * separate, narrower safety net — it only corrects for the two independent
+ * playback clocks (`HTMLMediaElement` vs `AudioContext`) creeping apart
+ * over a long playback, not for that initial fixed offset.
  */
 
 /** How far `currentPosition()` is allowed to drift from the video's own
@@ -32,7 +35,7 @@ const RESYNC_THRESHOLD_SECONDS = 0.15;
  * drift", since an `AudioBufferSourceNode` can't be repositioned in place
  * and has to be replaced.
  */
-export class NarrationPlayer {
+export class ClipAudioPlayer {
   private ctx: AudioContext;
   private gainNode: GainNode;
   private buffer: AudioBuffer | null = null;
@@ -51,8 +54,8 @@ export class NarrationPlayer {
     this.gainNode.gain.value = muted ? 0 : volume0to100 / 100;
   }
 
-  /** `null` means no mic track (recording without mic enabled, or a
-   * corrupt/undecodable file — see `decodeAudioFromUrl`). */
+  /** `null` means no recorded track (recording without mic/system enabled,
+   * or a corrupt/undecodable file — see `decodeAudioFromUrl`). */
   setBuffer(buffer: AudioBuffer | null): void {
     this.buffer = buffer;
   }

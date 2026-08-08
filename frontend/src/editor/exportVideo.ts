@@ -10,7 +10,7 @@ import type { CropRect } from "./crop";
 import type { CursorSettings } from "./cursorSettings";
 import { masksActiveAt, type MaskClip } from "./masks";
 import { fixMp4ColorRange } from "./mp4ColorRange";
-import { NarrationPlayer } from "./narration";
+import { ClipAudioPlayer } from "./narration";
 import { SceneRenderer } from "./renderer";
 import { computeOutputSize, resolutionPreset, type ResolutionId } from "./resolution";
 import { sliceAt, type ClipSlice } from "./slices";
@@ -259,15 +259,17 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
   let recorder: MediaRecorder | null = null;
   let stream: MediaStream | null = null;
   let running = false;
-  // Background audio + mic narration (Audio panel) share one mix context/
-  // destination — only stood up at all when there's actually something to
-  // mix (a background track selected, or the recording has a mic track),
-  // so an export with neither costs nothing extra and behaves exactly as
-  // it did before either of these existed.
+  // Background audio + recorded tracks (mic narration + system audio, the
+  // Audio panel) share one mix context/destination — only stood up at all
+  // when there's actually something to mix (a background track selected,
+  // or the recording has a mic/system track), so an export with none of
+  // those costs nothing extra and behaves exactly as it did before any of
+  // them existed.
   let audioMixCtx: AudioContext | null = null;
   let audioMixDestination: MediaStreamAudioDestinationNode | null = null;
   let bgAudioPlayer: BackgroundAudioPlayer | null = null;
-  let narrationPlayer: NarrationPlayer | null = null;
+  let narrationPlayer: ClipAudioPlayer | null = null;
+  let systemAudioPlayer: ClipAudioPlayer | null = null;
 
   try {
     // Attaching this listener has to happen *before* any `await` runs, or
@@ -279,7 +281,7 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
     // before it — it used to sit here and caused exactly that race.
     await waitForEvent(video, "loadedmetadata", 30_000);
 
-    if (opts.audioSettings.trackId || loaded.meta.hasMicAudio) {
+    if (opts.audioSettings.trackId || loaded.meta.hasMicAudio || loaded.meta.hasSystemAudio) {
       audioMixCtx = new AudioContext();
       audioMixDestination = audioMixCtx.createMediaStreamDestination();
 
@@ -289,9 +291,19 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
         bgAudioPlayer.setBuffer(await resolveAudioBuffer(audioMixCtx, opts.audioSettings));
       }
       if (loaded.meta.hasMicAudio) {
-        narrationPlayer = new NarrationPlayer(audioMixCtx, audioMixDestination);
+        narrationPlayer = new ClipAudioPlayer(audioMixCtx, audioMixDestination);
         narrationPlayer.setVolume(opts.audioSettings.micVolume, opts.audioSettings.micMuted);
         narrationPlayer.setBuffer(await decodeAudioFromUrl(audioMixCtx, mediaSrc(loaded.micAudioUrl)));
+      }
+      if (loaded.meta.hasSystemAudio) {
+        systemAudioPlayer = new ClipAudioPlayer(audioMixCtx, audioMixDestination);
+        systemAudioPlayer.setVolume(
+          opts.audioSettings.systemAudioVolume,
+          opts.audioSettings.systemAudioMuted,
+        );
+        systemAudioPlayer.setBuffer(
+          await decodeAudioFromUrl(audioMixCtx, mediaSrc(loaded.systemAudioUrl)),
+        );
       }
     }
 
@@ -356,10 +368,11 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
     recorder.start(1000);
 
     bgAudioPlayer?.play();
-    // Narration starts from the clip's own trim-in offset, not 0 — see
-    // `narration.ts`'s doc comment on the mic/screen-capture sync
-    // assumption this relies on.
+    // The recorded tracks (narration + system audio) start from the clip's
+    // own trim-in offset, not 0 — see `narration.ts`'s doc comment on the
+    // mic/screen-capture sync assumption this relies on.
     narrationPlayer?.playFrom(videoClipStart);
+    systemAudioPlayer?.playFrom(videoClipStart);
     video.playbackRate = 1;
     await video.play();
 
@@ -391,6 +404,7 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
           opts.onProgress?.(t - videoClipStart, totalSeconds);
         }
         narrationPlayer?.resyncIfDrifted(t);
+        systemAudioPlayer?.resyncIfDrifted(t);
         requestAnimationFrame(loop);
       };
       requestAnimationFrame(loop);
@@ -421,6 +435,7 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
     }
     bgAudioPlayer?.dispose();
     narrationPlayer?.dispose();
+    systemAudioPlayer?.dispose();
     void audioMixCtx?.close();
     document.body.removeChild(canvas);
     document.body.removeChild(video);

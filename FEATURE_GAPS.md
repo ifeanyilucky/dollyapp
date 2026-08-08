@@ -32,12 +32,14 @@ audio; Dolly now does too. A dedicated audio-only `SCStream` (`SCStreamOutput`
 type `.Audio`) writes `system.wav` alongside `mic.wav`
 (`src-tauri/src/audio/system.rs`, `SystemAudioRecorder`), `has_system_audio`
 is wired through `RecordingMeta`/the `.dol` packer, and the source picker has a
-live System audio toggle (`frontend/src/recorder/SourcePickerBar.tsx`). Mic and
-system audio stay as separate WAV tracks the editor can mix/drop at export time.
+live System audio toggle (`frontend/src/recorder/SourcePickerBar.tsx`). The
+editor surfaces it as a third audio source alongside mic narration and
+background audio (`frontend/src/editor/AudioPanel.tsx`) with its own volume/mute,
+played in preview and mixed into exports (`narration.ts`'s `ClipAudioPlayer`,
+wired through `EditorView` and `exportVideo.ts`). Mic and system audio stay as
+separate WAV tracks the editor can mix/drop at export time.
 
 Remaining (small):
-- Surface the system audio track in the editor (it's written, packed, and
-  servable over `dol://` as `audio/wav`, but not yet exposed in the UI).
 - Volume mixing/normalization (P2 anyway).
 
 ### Native Rust export pipeline — MISSING
