@@ -4,6 +4,7 @@ import { DEFAULT_AUDIO_SETTINGS, type AudioSettings } from "./audioSettings";
 import type { AspectRatioId } from "./aspect";
 import type { CropRect } from "./crop";
 import { DEFAULT_CURSOR_SETTINGS, type CursorSettings } from "./cursorSettings";
+import { DEFAULT_KEYSTROKE_SETTINGS, type KeystrokeSettings } from "./keystrokeSettings";
 import type { MaskClip } from "./masks";
 import { DEFAULT_RESOLUTION, type ResolutionId } from "./resolution";
 import type { ClipSlice } from "./slices";
@@ -40,6 +41,7 @@ export interface EditorDocument {
   masks: MaskClip[];
   animationSettings: AnimationSettings;
   audioSettings: AudioSettings;
+  keystrokeSettings: KeystrokeSettings;
 }
 
 export const DEFAULT_DOCUMENT: EditorDocument = {
@@ -56,6 +58,7 @@ export const DEFAULT_DOCUMENT: EditorDocument = {
   masks: [],
   animationSettings: DEFAULT_ANIMATION_SETTINGS,
   audioSettings: DEFAULT_AUDIO_SETTINGS,
+  keystrokeSettings: DEFAULT_KEYSTROKE_SETTINGS,
 };
 
 /** Serializes the whole document to the `project.json` bundle entry — the
@@ -186,6 +189,7 @@ export function parseProject(json: string): EditorDocument | null {
   const cursorSettings = sanitizeSettings(DEFAULT_CURSOR_SETTINGS, o.cursorSettings);
   const animationSettings = sanitizeSettings(DEFAULT_ANIMATION_SETTINGS, o.animationSettings);
   const audioSettings = sanitizeSettings(DEFAULT_AUDIO_SETTINGS, o.audioSettings);
+  const keystrokeSettings = sanitizeSettings(DEFAULT_KEYSTROKE_SETTINGS, o.keystrokeSettings);
 
   // Runtime-only object/blob URLs are dropped on hydration — the underlying
   // File is gone after a reload, so a restored `object:`/`blob:` URL would
@@ -222,6 +226,7 @@ export function parseProject(json: string): EditorDocument | null {
     masks: Array.isArray(o.masks) ? o.masks.filter(isMaskClip) : [],
     animationSettings,
     audioSettings,
+    keystrokeSettings,
   };
 
   // A saved doc whose trim is degenerate (never trimmed, or a corrupt file)

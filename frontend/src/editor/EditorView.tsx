@@ -14,6 +14,7 @@ import { DEFAULT_DOCUMENT, parseProject, serializeDocument, type EditorDocument 
 import { exportVideo } from "./exportVideo";
 import { useHistoryState } from "./history";
 import { IconRail, type ToolId } from "./IconRail";
+import { KeystrokesPanel } from "./KeystrokesPanel";
 import { MaskOverlay } from "./MaskEditor";
 import { createMask, defaultMaskRange, defaultMaskRect, masksActiveAt, type MaskClip, type MaskType } from "./masks";
 import { MaskEditorPanel } from "./MaskEditorPanel";
@@ -154,6 +155,7 @@ export function EditorView({
     masks,
     animationSettings,
     audioSettings,
+    keystrokeSettings,
   } = doc;
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -181,6 +183,8 @@ export function EditorView({
   cursorSettingsRef.current = cursorSettings;
   const animationSettingsRef = useRef(animationSettings);
   animationSettingsRef.current = animationSettings;
+  const keystrokeSettingsRef = useRef(keystrokeSettings);
+  keystrokeSettingsRef.current = keystrokeSettings;
   // Read once, at mount, by the background-audio-player-creation effect
   // below — not a per-frame `tick` dependency the way the other refs here
   // are, but the same "read latest without retriggering an effect" need.
@@ -696,9 +700,10 @@ export function EditorView({
           masksActiveAt(masksRef.current, video.currentTime).filter(
             (m) => !(suppressSelectedMaskRender && m.id === selectedMaskIdRef.current),
           ),
-          maskEditingActive ? selectedMaskIdRef.current : null,
-          animationSettingsRef.current,
-        );
+              maskEditingActive ? selectedMaskIdRef.current : null,
+              animationSettingsRef.current,
+              keystrokeSettingsRef.current,
+            );
         // Skip while previewing — the committed playhead (`currentTime`,
         // and the real solid-white indicator it drives in `Timeline`) must
         // not move just because the mouse is hovering somewhere.
@@ -974,6 +979,7 @@ export function EditorView({
         cursorSettings,
         animationSettings,
         audioSettings,
+        keystrokeSettings,
         aspectRatioId,
         resolution,
         crop,
@@ -1476,6 +1482,12 @@ export function EditorView({
                 onCommit={commitDoc}
                 hasMicAudio={loaded.meta.hasMicAudio}
                 hasSystemAudio={loaded.meta.hasSystemAudio}
+              />
+            ) : activeTool === "shortcuts" ? (
+              <KeystrokesPanel
+                settings={keystrokeSettings}
+                onChange={(next) => setDocTransient((d) => ({ ...d, keystrokeSettings: next }))}
+                onCommit={commitDoc}
               />
             ) : activeTool === "animations" ? (
               <AnimationPanel
