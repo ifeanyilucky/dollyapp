@@ -21,6 +21,9 @@ pub struct LoadedRecording {
     /// Counterpart to `screen_video_url` for the mic track — `None` when
     /// `meta.has_mic_audio` is false.
     mic_audio_url: Option<String>,
+    /// Counterpart to `screen_video_url` for the system-audio track — `None`
+    /// when `meta.has_system_audio` is false.
+    system_audio_url: Option<String>,
     /// The editor's saved `project.json` — the frontend's `EditorDocument`
     /// (crop, slices, masks, zoom keyframes, style, ...). `None` until the
     /// recording's first edit is saved, so a never-touched recording loads
@@ -36,6 +39,9 @@ pub fn load_recording(bundle_path: String) -> Result<LoadedRecording, String> {
     let cursor_track = reader.read_cursor_track().map_err(|e| e.to_string())?;
     let screen_video_url = reader.screen_video_url();
     let mic_audio_url = meta.has_mic_audio.then(|| reader.mic_audio_url().unwrap_or_default());
+    let system_audio_url = meta
+        .has_system_audio
+        .then(|| reader.system_audio_url().unwrap_or_default());
     let project_json = reader.read_project();
 
     Ok(LoadedRecording {
@@ -44,6 +50,7 @@ pub fn load_recording(bundle_path: String) -> Result<LoadedRecording, String> {
         bundle_path: reader.path().display().to_string(),
         screen_video_url,
         mic_audio_url,
+        system_audio_url,
         project_json,
     })
 }

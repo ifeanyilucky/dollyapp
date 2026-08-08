@@ -99,6 +99,17 @@ impl BundleReader {
         }
     }
 
+    /// System audio counterpart to `screen_video_url` — `None` when the
+    /// recording has no system track (callers should gate on
+    /// `RecordingMeta.has_system_audio`).
+    pub fn system_audio_url(&self) -> Option<String> {
+        if self.packed {
+            Some(dol_protocol::media_url(&self.root, names::SYSTEM_AUDIO))
+        } else {
+            Some(self.system_audio_path().display().to_string())
+        }
+    }
+
     /// Absolute path `screen.mov` *would* live at — only meaningful for
     /// legacy `*.motionrec` directories; every packed `.dol` bundle has a
     /// `screen.mov` inside it, just not as a standalone file.
@@ -113,6 +124,15 @@ impl BundleReader {
     /// guaranteed to actually have a `screen.mov`.
     pub fn mic_audio_path(&self) -> PathBuf {
         self.root.join(names::MIC_AUDIO)
+    }
+
+    /// Always returns the path `system.wav` *would* live at, whether or not
+    /// system audio capture was actually enabled for this recording —
+    /// callers must check `RecordingMeta.has_system_audio` before trying to
+    /// read it, the same way `screen_video_path` is unconditional but every
+    /// recording is guaranteed to actually have a `screen.mov`.
+    pub fn system_audio_path(&self) -> PathBuf {
+        self.root.join(names::SYSTEM_AUDIO)
     }
 
     /// Removes the recording from disk — a single file for `.dol` bundles, a
