@@ -3,6 +3,7 @@ import { DEFAULT_ANIMATION_SETTINGS } from "./animationSettings";
 import { DEFAULT_AUDIO_SETTINGS } from "./audioSettings";
 import { DEFAULT_CURSOR_SETTINGS } from "./cursorSettings";
 import { parseProject, serializeDocument, type EditorDocument } from "./document";
+import { DEFAULT_KEYSTROKE_SETTINGS } from "./keystrokeSettings";
 import { createMask } from "./masks";
 import { createSlice } from "./slices";
 import { DEFAULT_STYLE } from "./style";
@@ -37,6 +38,7 @@ function fullDocument(overrides: Partial<EditorDocument> = {}): EditorDocument {
     masks: [createMask(2, 6, "sensitive", { x: 0, y: 0, width: 100, height: 100 })],
     animationSettings: DEFAULT_ANIMATION_SETTINGS,
     audioSettings: DEFAULT_AUDIO_SETTINGS,
+    keystrokeSettings: DEFAULT_KEYSTROKE_SETTINGS,
     ...overrides,
   };
 }
