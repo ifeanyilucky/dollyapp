@@ -165,6 +165,10 @@ export function EditorView({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<SceneRenderer | null>(null);
+  // The pristine auto-generated keyframes (see the bundle-load effect), or
+  // null once the user has edited them / a saved project was loaded. The
+  // aspect-ratio effect uses it to re-plan for a new output aspect.
+  const autoKeyframesRef = useRef<ZoomKeyframe[] | null>(null);
   // Style/cursor-visibility/slice changes can fire rapidly (slider drags,
   // slice edits) or need to be read from a rAF loop that shouldn't
   // restart every tick — refs let `tick` always see the latest value
@@ -310,7 +314,19 @@ export function EditorView({
             // any window/area recording (non-zero display origin).
             const origin = { x: rec.meta.display.originX, y: rec.meta.display.originY };
             const shifted = shiftCursorTrack(rec.cursorTrack, origin);
-            resetDoc({ ...DEFAULT_DOCUMENT, zoomKeyframes: generateZoomKeyframes(shifted, { factor: 1 }) });
+            const auto = generateZoomKeyframes(shifted, { factor: 1 }, {
+              sourceFrame: {
+                width: rec.meta.display.widthPx / rec.meta.display.scaleFactor,
+                height: rec.meta.display.heightPx / rec.meta.display.scaleFactor,
+              },
+              outputAspect: aspectRatioPreset(aspectRatioId).ratio ?? undefined,
+            });
+            // Identity-tracks the pristine auto-generated keyframes so the
+            // aspect-ratio effect below can detect "user hasn't touched
+            // these" and re-plan them for the new output aspect. Any edit
+            // replaces the array via `setDoc`, breaking the identity.
+            autoKeyframesRef.current = auto;
+            resetDoc({ ...DEFAULT_DOCUMENT, zoomKeyframes: auto });
           }
           setLoaded(rec);
         }
@@ -402,10 +418,31 @@ export function EditorView({
   }, [loaded, effectiveCrop]);
 
   // Live aspect-ratio switch — reshapes the existing renderer's viewport
-  // instead of rebuilding it (see the effect above).
+  // instead of rebuilding it (see the effect above). If the current keyframes
+  // are still the pristine auto-generated set (identity-checked against
+  // `autoKeyframesRef`), they're re-planned for the new output aspect so a
+  // vertical crop actually frames the cursor instead of over-zooming a
+  // keyframe planned for the wide source. The re-plan goes through
+  // `patchDoc` (non-undoable — it's auto-adjustment, not a user edit) and
+  // the `zoomKeyframes` -> renderer effect propagates it live.
   useEffect(() => {
     if (!loaded) return;
-    rendererRef.current?.setOutputAspect(aspectRatioPreset(aspectRatioId).ratio ?? undefined);
+    const aspect = aspectRatioPreset(aspectRatioId).ratio ?? undefined;
+    rendererRef.current?.setOutputAspect(aspect);
+    if (autoKeyframesRef.current && doc.zoomKeyframes === autoKeyframesRef.current) {
+      const { widthPx, heightPx, scaleFactor, originX, originY } = loaded.meta.display;
+      const shifted = shiftCursorTrack(loaded.cursorTrack, { x: originX, y: originY });
+      const replanned = generateZoomKeyframes(shifted, { factor: 1 }, {
+        sourceFrame: { width: widthPx / scaleFactor, height: heightPx / scaleFactor },
+        outputAspect: aspect,
+      });
+      autoKeyframesRef.current = replanned;
+      patchDoc({ zoomKeyframes: replanned });
+    }
+    // Deliberately *not* keyed on `zoomKeyframes` — a keyframe edit breaks
+    // the identity check above (pristine -> edited) and must not retrigger
+    // planning.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, aspectRatioId]);
 
   // Live "Screen animation style"/"Cursor animation style" switch (the

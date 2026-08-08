@@ -182,6 +182,75 @@ function clusterSpread(cluster: Anchor[]): number {
   return maxDist;
 }
 
+function clusterSpreadOnAxis(cluster: Anchor[], axis: "x" | "y"): number {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const a of cluster) {
+    const v = axis === "x" ? a.x : a.y;
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  return min === Infinity ? 0 : max - min;
+}
+
+/** Options that let auto-zoom plan *for the output aspect*, not just the
+ * source's. `sourceFrame` is the source frame in point space (the same
+ * space the cursor track lives in); `outputAspect` is the target
+ * width/height (a vertical 9:16 output of a 16:9 recording, e.g.). */
+export interface GenerateZoomOptions {
+  sourceFrame?: FrameSize;
+  outputAspect?: number;
+}
+
+/** Zoom level for one cluster, aspect-aware: for a vertical (narrower)
+ * output, the viewport's level-1 width is a fraction of the source width,
+ * so the same physical cursor spread fills a bigger fraction of it. The
+ * tight/wide thresholds scale down by that fraction and the spread is
+ * measured along the *limiting* axis (the one the output viewport shrinks
+ * the most) — keeping a cluster of clicks framed in a tall crop instead of
+ * blowing up to where the cursor falls off the left/right edge. Same-aspect
+ * (or no-aspect) planning is byte-for-byte the old behavior. */
+function levelForCluster(
+  cluster: Anchor[],
+  options?: GenerateZoomOptions,
+): number {
+  const frame = options?.sourceFrame;
+  const aspect = options?.outputAspect;
+  if (!frame || !aspect) return levelForSpread(clusterSpread(cluster));
+
+  let targetW = frame.width;
+  let targetH = frame.height;
+  {
+    // Same framing math as `viewportForKeyframe` (base rect at level 1).
+    let baseWidth = frame.width;
+    let baseHeight = baseWidth / aspect;
+    if (baseHeight > frame.height) {
+      baseHeight = frame.height;
+      baseWidth = baseHeight * aspect;
+    }
+    targetW = baseWidth;
+    targetH = baseHeight;
+  }
+
+  const xFraction = targetW / frame.width;
+  const yFraction = targetH / frame.height;
+  // A same-aspect (or near-same-aspect) output keeps the legacy Euclidean
+  // spread → level mapping untouched; only a genuinely narrower output gets
+  // the axis-aware re-planning below.
+  if (xFraction >= 0.95 && yFraction >= 0.95) {
+    return levelForSpread(clusterSpread(cluster));
+  }
+
+  const limitFraction = Math.min(xFraction, yFraction);
+  const useX = xFraction <= yFraction;
+  const spread = useX ? clusterSpreadOnAxis(cluster, "x") : clusterSpreadOnAxis(cluster, "y");
+  const tight = BASE.tightSpreadPx * limitFraction;
+  const wide = BASE.wideSpreadPx * limitFraction;
+  const t = clamp((spread - tight) / (wide - tight), 0, 1);
+  const level = 2.0 - t * (2.0 - 1.4);
+  return clamp(level, BASE.minZoomLevel, BASE.maxZoomLevel);
+}
+
 function levelForSpread(spread: number): number {
   const t = clamp(
     (spread - BASE.tightSpreadPx) / (BASE.wideSpreadPx - BASE.tightSpreadPx),
@@ -252,6 +321,7 @@ function insertMidHoldDips(keyframes: ZoomKeyframe[], sensitivity: number): Zoom
 export function generateZoomKeyframes(
   track: CursorTrack,
   sensitivity: AutoZoomSensitivity = { factor: 1 },
+  options?: GenerateZoomOptions,
 ): ZoomKeyframe[] {
   const factor = sensitivity.factor;
   const anchors = extractAnchors(track, factor);
@@ -263,7 +333,7 @@ export function generateZoomKeyframes(
     return {
       startT: Math.max(0, first.t - BASE.leadUs),
       endT: last.t + BASE.trailUs,
-      level: levelForSpread(clusterSpread(cluster)),
+      level: levelForCluster(cluster, options),
       center: centroid(cluster),
       ...DEFAULT_ZOOM_KEYFRAME_EXTRAS,
     };
