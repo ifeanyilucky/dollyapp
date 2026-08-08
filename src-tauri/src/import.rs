@@ -63,7 +63,7 @@ pub fn import_video(app: &AppHandle, video_path: &str) -> Result<PathBuf> {
     let base = projects::recordings_dir(app)?;
     std::fs::create_dir_all(&base)
         .with_context(|| format!("creating {}", base.display()))?;
-    let name = unique_name(&base, import_name(src));
+    let name = unique_name(&base, &import_name(src));
     let dol_path = base.join(format!("{name}.dol"));
 
     // Stage as a loose `.motionrec` dir (the same shape a real recording's
@@ -125,14 +125,17 @@ struct VideoMetadata {
 /// `preferredTransform` is applied to get the *displayed* orientation right
 /// for rotated (e.g. phone) videos.
 fn read_video_metadata(path: &Path) -> Result<VideoMetadata> {
-    let path_str = path.to_str().ok_or_else(|| anyhow!("non-UTF-8 path"))?;
-    let ns_path = NSString::from_str(path_str);
-    let url = NSURL::from_file_path(&ns_path)
+    let url = NSURL::from_file_path(path)
         .ok_or_else(|| anyhow!("invalid file path: {}", path.display()))?;
 
     let asset = unsafe { AVURLAsset::URLAssetWithURL_options(&url, None) };
 
     let media_type = unsafe { AVMediaTypeVideo }.ok_or_else(|| anyhow!("AVMediaTypeVideo unavailable"))?;
+    // `tracksWithMediaType:` is deprecated in favor of the async
+    // `loadTracksWithMediaType:completionHandler:` — fine to keep the
+    // synchronous variant here, where the import already blocks on copying
+    // the whole file anyway and there's no UI to keep responsive.
+    #[allow(deprecated)]
     let tracks = unsafe { asset.tracksWithMediaType(media_type) };
     let track = tracks
         .firstObject()
