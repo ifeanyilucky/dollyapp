@@ -9,6 +9,7 @@ pub mod dol_protocol;
 pub mod encode;
 pub mod export;
 pub mod fs;
+mod import;
 pub mod permissions;
 mod projects;
 pub mod recorder;
@@ -77,6 +78,7 @@ pub fn run() {
             commands::set_show_in_dock,
             commands::open_settings_window,
             commands::list_recent_projects,
+            commands::import_video,
         ])
         .manage(recorder::RecorderState::default())
         .manage(toolbar::ToolbarHitRect::default())
