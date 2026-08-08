@@ -8,9 +8,10 @@ use anyhow::{anyhow, Result};
 use block2::RcBlock;
 use core_graphics::event::CGEvent;
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSEventType};
+use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSEventType, NSCursor};
 
 use super::CursorRecording;
 use crate::bundle::{CursorEvent, CursorSample, CursorTrack, CursorType};
@@ -25,6 +26,13 @@ use crate::clock::Clock;
 /// - an `NSEvent` global monitor block, which needs the main run loop
 ///   pumping (true of Tauri's app for the app's lifetime) to actually
 ///   deliver callbacks, delivers clicks/keys/scroll as discrete events.
+///
+/// The live cursor *shape* is resolved from the monitor block — it runs on
+/// the main thread, where `NSCursor.currentSystemCursor` is callable — and
+/// shared with the position sampler via a mutex, so each 120Hz sample is
+/// stamped with the type that was active at the time. Shape changes only
+/// ever follow pointer motion (hit-testing), so resolving on mouse-move (and
+/// every other monitored event, throttled) covers every transition.
 pub struct CursorRecorder {
     clock: Clock,
     samples: Arc<Mutex<Vec<CursorSample>>>,
@@ -40,18 +48,20 @@ impl CursorRecorder {
     pub fn start(clock: Clock) -> Self {
         let samples = Arc::new(Mutex::new(Vec::new()));
         let events = Arc::new(Mutex::new(Vec::new()));
+        let cursor_type = Arc::new(Mutex::new(CursorType::Arrow));
         let stop_flag = Arc::new(AtomicBool::new(false));
 
         let sampler_thread = {
             let samples = Arc::clone(&samples);
             let stop_flag = Arc::clone(&stop_flag);
+            let cursor_type = Arc::clone(&cursor_type);
             std::thread::Builder::new()
                 .name("dolly-cursor-sampler".into())
-                .spawn(move || run_sampler(clock, samples, stop_flag))
+                .spawn(move || run_sampler(clock, samples, stop_flag, cursor_type))
                 .expect("failed to spawn cursor sampler thread")
         };
 
-        let monitor_token = install_global_monitor(clock, Arc::clone(&events));
+        let monitor_token = install_global_monitor(clock, Arc::clone(&events), cursor_type.clone());
 
         Self {
             clock,
@@ -193,7 +203,12 @@ fn main_display_height_points() -> f64 {
     core_graphics::display::CGDisplay::main().bounds().size.height
 }
 
-fn run_sampler(clock: Clock, samples: Arc<Mutex<Vec<CursorSample>>>, stop_flag: Arc<AtomicBool>) {
+fn run_sampler(
+    clock: Clock,
+    samples: Arc<Mutex<Vec<CursorSample>>>,
+    stop_flag: Arc<AtomicBool>,
+    cursor_type: Arc<Mutex<CursorType>>,
+) {
     // A source is required by the API but doesn't gate what `.location()`
     // reports — CGEventCreate always reflects the live HID pointer state.
     let Ok(source) = CGEventSource::new(CGEventSourceStateID::HIDSystemState) else {
@@ -206,15 +221,15 @@ fn run_sampler(clock: Clock, samples: Arc<Mutex<Vec<CursorSample>>>, stop_flag: 
 
         if let Ok(event) = CGEvent::new(source.clone()) {
             let loc = event.location();
+            // The type is the monitor block's latest resolution (see the
+            // struct doc) — the sampler can't call `NSCursor` itself, since
+            // that's main-thread-bound and this thread is off-main.
+            let cursor_type = cursor_type.lock().map(|t| *t).unwrap_or(CursorType::Arrow);
             let sample = CursorSample {
                 t: clock.now_us(),
                 x: loc.x,
                 y: loc.y,
-                // Resolving the live `NSCursor` type requires reading app
-                // state from the main thread; left as a fixed value here
-                // and refined once the editor needs per-widget cursor
-                // shapes (ARCHITECTURE.md, cursor rendering).
-                cursor_type: CursorType::Arrow,
+                cursor_type,
             };
             if let Ok(mut guard) = samples.lock() {
                 guard.push(sample);
@@ -228,20 +243,44 @@ fn run_sampler(clock: Clock, samples: Arc<Mutex<Vec<CursorSample>>>, stop_flag: 
     }
 }
 
+/// Minimum time between `NSCursor.currentSystemCursor` resolutions inside
+/// the monitor block. Mouse-move events can fire far faster than any cursor
+/// shape actually changes, so resolving every event would just burn main-
+/// thread time; 10Hz is plenty to catch every hit-test transition.
+const CURSOR_TYPE_RESOLVE_INTERVAL_US: u64 = 100_000;
+
 fn install_global_monitor(
     clock: Clock,
     events: Arc<Mutex<Vec<CursorEvent>>>,
+    cursor_type: Arc<Mutex<CursorType>>,
 ) -> Option<Retained<AnyObject>> {
     let mask = NSEventMask::LeftMouseDown
         | NSEventMask::LeftMouseUp
         | NSEventMask::RightMouseDown
         | NSEventMask::RightMouseUp
         | NSEventMask::KeyDown
-        | NSEventMask::ScrollWheel;
+        | NSEventMask::ScrollWheel
+        // Without this the block never fires while the pointer is merely
+        // moving — which is precisely when the cursor shape can change.
+        | NSEventMask::MouseMoved;
+
+    let last_resolve: RefCell<u64> = RefCell::new(0);
 
     let handler = RcBlock::new(move |event: std::ptr::NonNull<NSEvent>| {
         let event = unsafe { event.as_ref() };
         let t = clock.now_us();
+
+        // Cursor-shape changes always follow pointer motion (hit-testing),
+        // so resolving on the throttled mouse-move path covers them all.
+        if t.saturating_sub(*last_resolve.borrow()) >= CURSOR_TYPE_RESOLVE_INTERVAL_US {
+            *last_resolve.borrow_mut() = t;
+            if let Some(cursor) = unsafe { NSCursor::currentSystemCursor() } {
+                if let Ok(mut guard) = cursor_type.lock() {
+                    *guard = system_cursor_type(&cursor);
+                }
+            }
+        }
+
         // For a globally monitored event there's no associated window, and
         // AppKit documents `locationInWindow` as screen coordinates in that
         // case — with the AppKit screen-space origin at the bottom-left of
@@ -303,4 +342,88 @@ fn modifier_names(flags: NSEventModifierFlags) -> Vec<String> {
         names.push("control".to_string());
     }
     names
+}
+
+// The system cursors worth distinguishing, keyed by the `CursorType` they
+// map to. Built once per main thread (the only thread that ever calls it) —
+// `NSCursor` class methods return the same cached instances every call, and
+// `Retained` is `!Send`, so a `thread_local` is the natural home.
+thread_local! {
+    static SYSTEM_CURSORS: Vec<(CursorType, Retained<NSCursor>)> = {
+        vec![
+            (CursorType::Arrow, NSCursor::arrowCursor()),
+            (CursorType::IBeam, NSCursor::IBeamCursor()),
+            (CursorType::IBeam, NSCursor::IBeamCursorForVerticalLayout()),
+            (CursorType::PointingHand, NSCursor::pointingHandCursor()),
+            (CursorType::ResizeLeftRight, NSCursor::resizeLeftCursor()),
+            (CursorType::ResizeLeftRight, NSCursor::resizeRightCursor()),
+            (CursorType::ResizeLeftRight, NSCursor::resizeLeftRightCursor()),
+            (CursorType::ResizeUpDown, NSCursor::resizeUpCursor()),
+            (CursorType::ResizeUpDown, NSCursor::resizeDownCursor()),
+            (CursorType::ResizeUpDown, NSCursor::resizeUpDownCursor()),
+            (CursorType::ClosedHand, NSCursor::closedHandCursor()),
+            (CursorType::ClosedHand, NSCursor::openHandCursor()),
+        ]
+    };
+}
+
+/// Maps a live system cursor to the recording's coarse `CursorType`. The
+/// diagonal resize handles collapse into their axis (left/right or up/down,
+/// whichever the enum offers); anything else — crosshair, disappearing-item,
+/// not-allowed, drag/drop cursors, ... — becomes `Other` (which the editor
+/// renders as the user's chosen arrow-ish glyph, see `cursorSettings.ts`).
+fn system_cursor_type(cursor: &NSCursor) -> CursorType {
+    SYSTEM_CURSORS.with(|cache| {
+        for (kind, candidate) in cache {
+            // `NSCursor` implements `isEqual:` (compares hotspot + image).
+            let equal: bool = unsafe { msg_send![cursor, isEqual: &**candidate] };
+            if equal {
+                return *kind;
+            }
+        }
+        CursorType::Other
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Both tests need a real NSApplication run loop / WindowServer
+    // connection: `+[NSCursor ...]` class methods return nil (and the
+    // bindings panic) in a bare test process. Run with `cargo test -- --ignored`
+    // from within the app, or rely on the in-app path these exercise.
+    #[test]
+    #[ignore = "requires a running NSApplication (WindowServer connection)"]
+    fn maps_known_system_cursors_to_their_coarse_types() {
+        assert_eq!(system_cursor_type(&NSCursor::arrowCursor()), CursorType::Arrow);
+        assert_eq!(system_cursor_type(&NSCursor::IBeamCursor()), CursorType::IBeam);
+        assert_eq!(
+            system_cursor_type(&NSCursor::pointingHandCursor()),
+            CursorType::PointingHand
+        );
+        assert_eq!(
+            system_cursor_type(&NSCursor::resizeLeftRightCursor()),
+            CursorType::ResizeLeftRight
+        );
+        assert_eq!(
+            system_cursor_type(&NSCursor::resizeUpDownCursor()),
+            CursorType::ResizeUpDown
+        );
+        assert_eq!(
+            system_cursor_type(&NSCursor::closedHandCursor()),
+            CursorType::ClosedHand
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a running NSApplication (WindowServer connection)"]
+    fn treats_unknown_system_cursors_as_other() {
+        // Crosshair isn't in the cache — must fall through to `Other`
+        // rather than misreporting as a known type.
+        assert_eq!(
+            system_cursor_type(&NSCursor::crosshairCursor()),
+            CursorType::Other
+        );
+    }
 }
