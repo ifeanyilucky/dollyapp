@@ -18,9 +18,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use objc2_av_foundation::{AVMediaTypeVideo, AVURLAsset};
-use objc2_avf::rc::Retained;
 use objc2_core_media::CMTimeFlags;
-use objc2_foundation_avf::{NSURL, NSString};
+use objc2_foundation_avf::NSURL;
 use tauri::{AppHandle, Manager};
 
 use crate::bundle::container::pack_recording;
