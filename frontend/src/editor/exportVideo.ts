@@ -8,6 +8,7 @@ import type { AudioSettings } from "./audioSettings";
 import { BackgroundAudioPlayer, decodeAudioFromUrl, getAmbientBuffer, isAmbientTrackId } from "./backgroundAudio";
 import type { CropRect } from "./crop";
 import type { CursorSettings } from "./cursorSettings";
+import type { KeystrokeSettings } from "./keystrokeSettings";
 import { masksActiveAt, type MaskClip } from "./masks";
 import { fixMp4ColorRange } from "./mp4ColorRange";
 import { ClipAudioPlayer } from "./narration";
@@ -38,6 +39,9 @@ export interface ExportOptions {
    * `backgroundAudio.ts` for how the chosen track is resolved and mixed
    * into the exported stream. */
   audioSettings: AudioSettings;
+  /** Shortcuts panel (keystrokes overlay) settings — recent key presses
+   * rendered as chips over the video. See `renderer.ts`'s `drawKeystrokes`. */
+  keystrokeSettings: KeystrokeSettings;
   aspectRatioId: AspectRatioId;
   /** Output resolution tier — same one the live preview canvas rendered
    * at (see `resolution.ts`); "preview and export must never diverge". */
@@ -340,6 +344,7 @@ export async function exportVideo(opts: ExportOptions): Promise<string | null> {
         masksActiveAt(opts.masks, tS),
         null,
         opts.animationSettings,
+        opts.keystrokeSettings,
       );
     };
 

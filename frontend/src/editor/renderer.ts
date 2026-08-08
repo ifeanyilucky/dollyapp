@@ -21,6 +21,8 @@ import {
   type CursorSettings,
 } from "./cursorSettings";
 import type { CropRect } from "./crop";
+import { keyComboParts } from "./keycodeMap";
+import { DEFAULT_KEYSTROKE_SETTINGS, keystrokeSizeMultiplier, type KeystrokeSettings } from "./keystrokeSettings";
 import type { MaskClip } from "./masks";
 import type { SliceCursorOverride } from "./slices";
 import { DEFAULT_STYLE, type StyleSettings } from "./style";
@@ -407,7 +409,11 @@ export class SceneRenderer {
    * style enums on the same object reshape stateful spring/filter machinery
    * instead, via `setScreenAnimationStyle`/`setCursorAnimationStyle`, so
    * they're not re-applied every frame the way these plain multipliers
-   * are. */
+   * are. `keystrokeSettings`: the Shortcuts panel's overlay — recent
+   * recorded key presses rendered as modifier+key chips anchored to the
+   * content rect (see `drawKeystrokes`). Drawn after masks, *before* the
+   * cursor's own early-return, so it appears even when the cursor glyph
+   * is hidden; preview and export both go through this one code path. */
   draw(
     ctx: CanvasRenderingContext2D,
     video: HTMLVideoElement,
@@ -421,6 +427,7 @@ export class SceneRenderer {
     activeMasks: MaskClip[] = [],
     editingMaskId: string | null = null,
     animationSettings: AnimationSettings = DEFAULT_ANIMATION_SETTINGS,
+    keystrokeSettings: KeystrokeSettings = DEFAULT_KEYSTROKE_SETTINGS,
   ): void {
     const canvas = ctx.canvas;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -527,6 +534,8 @@ export class SceneRenderer {
 
     this.drawMasks(ctx, video, viewport, content, style, activeMasks, editingMaskId);
 
+    this.drawKeystrokes(ctx, tUs, content, keystrokeSettings);
+
     // `cursor` still drives pan above even when the glyph itself is
     // hidden — this flag is purely visual, not a "stop tracking" switch.
     if (!cursor || !showCursor || sliceCursorOverride?.hideCursor) return;
@@ -560,6 +569,96 @@ export class SceneRenderer {
     const type = this.cursorTypeAt(tUs);
     const pulseScale = this.clickPulseScaleAt(tUs);
     drawCursorGlyph(ctx, cx, cy, pulseScale, type, cursorSettings, cursorAlpha, cursorBlurPx);
+  }
+
+  /** Renders the keystrokes/shortcuts overlay — the `maxKeys` most recent
+   * distinct key presses within `durationS` of `tUs`, each as a chip stack
+   * of modifier symbols + the main key, anchored to `content` per
+   * `KeystrokeSettings.position`. Called between masks and the cursor so it
+   * shows even when the cursor glyph is hidden. Events are time-sorted, so
+   * a backward scan from the end finds the window's latest presses first
+   * and stops at the window edge. */
+  private drawKeystrokes(
+    ctx: CanvasRenderingContext2D,
+    tUs: number,
+    content: Rect,
+    settings: KeystrokeSettings,
+  ): void {
+    if (!settings.enabled || this.events.length === 0) return;
+    const windowUs = Math.max(200_000, settings.durationS * 1_000_000);
+
+    // Collect the most recent distinct combos in the window (most recent
+    // first), collapsing consecutive repeats — key auto-repeat would
+    // otherwise stack identical chips for a held key.
+    const combos: string[][] = [];
+    let prevPartsKey = "";
+    for (let i = this.events.length - 1; i >= 0; i--) {
+      const e = this.events[i];
+      if (e.kind !== "key" || e.t > tUs) continue;
+      if (e.t < tUs - windowUs) break;
+      const parts = keyComboParts(e.modifiers, e.code);
+      const partsKey = parts.join("\u0000");
+      if (partsKey === prevPartsKey) continue;
+      prevPartsKey = partsKey;
+      combos.push(parts);
+      if (combos.length >= settings.maxKeys) break;
+    }
+    if (combos.length === 0) return;
+    combos.reverse();
+
+    const scale = keystrokeSizeMultiplier(settings.size);
+    const fontPx = 17 * scale;
+    const chipPadX = 11 * scale;
+    const chipPadY = 5 * scale;
+    const radius = 8 * scale;
+    const chipGap = 5 * scale;
+    const groupGap = 5 * scale;
+    const margin = 18 * scale;
+
+    ctx.save();
+    ctx.font = `600 ${fontPx}px -apple-system, "Helvetica Neue", "Segoe UI", sans-serif`;
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+
+    const groups = combos.map((parts) =>
+      parts.map((text) => {
+        const w = ctx.measureText(text).width + chipPadX * 2;
+        return { text, w };
+      }),
+    );
+    const groupWidth = (g: { w: number }[]) => g.reduce((s, c) => s + c.w, 0) + chipGap * (g.length - 1);
+    const widest = Math.max(...groups.map(groupWidth));
+    const chipHeight = fontPx + chipPadY * 2;
+    const stackHeight = groups.length * chipHeight + groupGap * (groups.length - 1);
+
+    const isRight = settings.position.endsWith("right");
+    const isLeft = settings.position.endsWith("left");
+    const isTop = settings.position.startsWith("top");
+    const baseX = isRight
+      ? content.x + content.width - margin - widest
+      : isLeft
+        ? content.x + margin
+        : content.x + (content.width - widest) / 2;
+    const baseY = isTop ? content.y + margin : content.y + content.height - margin - stackHeight;
+
+    let y = baseY;
+    for (const group of groups) {
+      let x = baseX;
+      for (const chip of group) {
+        ctx.beginPath();
+        ctx.roundRect(x, y, chip.w, chipHeight, radius);
+        ctx.fillStyle = "rgba(18, 18, 22, 0.72)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.28)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(chip.text, x + chip.w / 2, y + chipHeight / 2);
+        x += chip.w + chipGap;
+      }
+      y += chipHeight + groupGap;
+    }
+    ctx.restore();
   }
 
   /** How many trailing echoes to draw for the video content this frame,
