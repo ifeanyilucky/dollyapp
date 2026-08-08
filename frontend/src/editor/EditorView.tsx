@@ -17,7 +17,7 @@ import { IconRail, type ToolId } from "./IconRail";
 import { MaskOverlay } from "./MaskEditor";
 import { createMask, defaultMaskRange, defaultMaskRect, masksActiveAt, type MaskClip, type MaskType } from "./masks";
 import { MaskEditorPanel } from "./MaskEditorPanel";
-import { NarrationPlayer } from "./narration";
+import { ClipAudioPlayer } from "./narration";
 import { computeContentRect, SceneRenderer, shiftCursorTrack } from "./renderer";
 import { initialSlices, resizeSlices, sliceAt, splitSliceAt, type ClipSlice } from "./slices";
 import { SliceEditorPanel } from "./SliceEditorPanel";
@@ -223,7 +223,13 @@ export function EditorView({
   // `bgAudioPlayerRef` (created once, alongside it), but a separate player
   // since narration is a single non-looping, seekable track rather than an
   // always-looping ambient one.
-  const narrationPlayerRef = useRef<NarrationPlayer | null>(null);
+  const narrationPlayerRef = useRef<ClipAudioPlayer | null>(null);
+  // System-audio playback (see `narration.ts`) — a second `ClipAudioPlayer`
+  // for the recording's own `system.wav` track, identical mechanics to the
+  // narration player (single non-looping, seekable buffer) but its own
+  // instance/settings, since it only exists when `hasSystemAudio` and
+  // carries its own volume/mute.
+  const systemAudioPlayerRef = useRef<ClipAudioPlayer | null>(null);
   // Drive `PreviewControls`' fade — see the mouse-activity effect below.
   const previewHideTimerRef = useRef<number | null>(null);
   const hoveringPreviewControlsRef = useRef(false);
@@ -442,14 +448,22 @@ export function EditorView({
     const player = new BackgroundAudioPlayer(ctx, ctx.destination);
     player.setVolume(audioSettingsRef.current.volume, audioSettingsRef.current.muted);
     bgAudioPlayerRef.current = player;
-    const narrationPlayer = new NarrationPlayer(ctx, ctx.destination);
+    const narrationPlayer = new ClipAudioPlayer(ctx, ctx.destination);
     narrationPlayer.setVolume(audioSettingsRef.current.micVolume, audioSettingsRef.current.micMuted);
     narrationPlayerRef.current = narrationPlayer;
+    const systemAudioPlayer = new ClipAudioPlayer(ctx, ctx.destination);
+    systemAudioPlayer.setVolume(
+      audioSettingsRef.current.systemAudioVolume,
+      audioSettingsRef.current.systemAudioMuted,
+    );
+    systemAudioPlayerRef.current = systemAudioPlayer;
     return () => {
       player.dispose();
       bgAudioPlayerRef.current = null;
       narrationPlayer.dispose();
       narrationPlayerRef.current = null;
+      systemAudioPlayer.dispose();
+      systemAudioPlayerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -474,6 +488,30 @@ export function EditorView({
   useEffect(() => {
     narrationPlayerRef.current?.setVolume(audioSettings.micVolume, audioSettings.micMuted);
   }, [audioSettings.micVolume, audioSettings.micMuted]);
+
+  // Decodes the recording's own system-audio track (if it has one) once
+  // `loaded` arrives — the exact counterpart of the mic decode above; the
+  // two tracks play together through independent `ClipAudioPlayer`s.
+  useEffect(() => {
+    if (!loaded || !loaded.meta.hasSystemAudio) return;
+    const ctx = audioCtxRef.current;
+    const player = systemAudioPlayerRef.current;
+    if (!ctx || !player) return;
+    let cancelled = false;
+    void decodeAudioFromUrl(ctx, mediaSrc(loaded.systemAudioUrl)).then((buffer) => {
+      if (!cancelled) player.setBuffer(buffer);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loaded]);
+
+  useEffect(() => {
+    systemAudioPlayerRef.current?.setVolume(
+      audioSettings.systemAudioVolume,
+      audioSettings.systemAudioMuted,
+    );
+  }, [audioSettings.systemAudioVolume, audioSettings.systemAudioMuted]);
 
   // Resolves whichever track `audioSettings.trackId` points at (a built-in
   // ambient preset, or the user's uploaded file) into a real `AudioBuffer`
@@ -521,9 +559,11 @@ export function EditorView({
     if (isPlaying) {
       bgAudioPlayerRef.current?.play();
       narrationPlayerRef.current?.playFrom(videoRef.current?.currentTime ?? 0);
+      systemAudioPlayerRef.current?.playFrom(videoRef.current?.currentTime ?? 0);
     } else {
       bgAudioPlayerRef.current?.pause();
       narrationPlayerRef.current?.pause();
+      systemAudioPlayerRef.current?.pause();
     }
   }, [isPlaying]);
 
@@ -614,10 +654,12 @@ export function EditorView({
         }
         lastSoundCheckTUsRef.current = tUs;
 
-        // Keeps narration lined up with `video.currentTime` over a long
-        // playback — a no-op whenever it's already close enough (see
-        // `NarrationPlayer.resyncIfDrifted`'s own threshold) or paused.
+        // Keeps the recorded tracks (narration + system audio) lined up
+        // with `video.currentTime` over a long playback — a no-op whenever
+        // each is already close enough (see `ClipAudioPlayer.resyncIfDrifted`'s
+        // own threshold) or paused.
         narrationPlayerRef.current?.resyncIfDrifted(video.currentTime);
+        systemAudioPlayerRef.current?.resyncIfDrifted(video.currentTime);
 
         // `maskEditingActive`: the selected mask's box (`MaskOverlay`) is
         // actually showing right now — selected *and* currently in its own
@@ -859,11 +901,14 @@ export function EditorView({
     // position — see `tick`'s own comment on this ref.
     lastSoundCheckTUsRef.current = tUs;
     setCurrentTime(clamped);
-    // Keep narration lined up with a seek that happens mid-playback (e.g.
-    // clicking elsewhere on the timeline while playing) — a no-op while
-    // paused, since the `isPlaying` effect above already starts it from the
-    // right offset on the next play.
-    if (isPlaying) narrationPlayerRef.current?.playFrom(clamped);
+    // Keep the recorded tracks lined up with a seek that happens mid-
+    // playback (e.g. clicking elsewhere on the timeline while playing) — a
+    // no-op while paused, since the `isPlaying` effect above already starts
+    // them from the right offset on the next play.
+    if (isPlaying) {
+      narrationPlayerRef.current?.playFrom(clamped);
+      systemAudioPlayerRef.current?.playFrom(clamped);
+    }
   }
 
   /** Hover-scrub preview from `Timeline` (`onPreviewSeek`) — moves the
@@ -1430,6 +1475,7 @@ export function EditorView({
                 onChange={(next) => setDocTransient((d) => ({ ...d, audioSettings: next }))}
                 onCommit={commitDoc}
                 hasMicAudio={loaded.meta.hasMicAudio}
+                hasSystemAudio={loaded.meta.hasSystemAudio}
               />
             ) : activeTool === "animations" ? (
               <AnimationPanel

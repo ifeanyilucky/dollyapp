@@ -16,6 +16,9 @@ export interface LoadedRecording {
   /** Counterpart to `screenVideoUrl` for the mic track — `null` when
    * `meta.hasMicAudio` is false. */
   micAudioUrl: string | null;
+  /** Counterpart to `screenVideoUrl` for the system-audio track — `null`
+   * when `meta.hasSystemAudio` is false. */
+  systemAudioUrl: string | null;
   /** The saved editor document (`project.json`) — `null` until the
    * recording's first edit is saved. Hydrate into `EditorDocument` with
    * `parseProject` in `document.ts`. */

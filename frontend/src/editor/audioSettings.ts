@@ -30,6 +30,12 @@ export interface AudioSettings {
    * actually has a mic track; harmless unused defaults otherwise. */
   micVolume: number;
   micMuted: boolean;
+  /** System audio (recorded machine output — `RecordingMeta.hasSystemAudio`,
+   * same single-shot playback mechanics as narration, see `narration.ts`) —
+   * independent volume/mute, only surfaced in `AudioPanel` when the loaded
+   * recording actually has a system track. */
+  systemAudioVolume: number;
+  systemAudioMuted: boolean;
 }
 
 export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
@@ -40,4 +46,6 @@ export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
   muted: false,
   micVolume: 100,
   micMuted: false,
+  systemAudioVolume: 100,
+  systemAudioMuted: false,
 };
