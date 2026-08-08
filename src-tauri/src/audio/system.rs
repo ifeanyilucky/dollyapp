@@ -12,7 +12,7 @@ use block2_avf::RcBlock;
 use dispatch2::DispatchQueue;
 use objc2_avf::rc::Retained;
 use objc2_avf::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
-use objc2_avf::{define_class, msg_send, AnyThread};
+use objc2_avf::{define_class, msg_send, AnyThread, DefinedClass};
 use objc2_core_audio_types::{kAudioFormatFlagIsNonInterleaved, AudioBufferList};
 use objc2_core_foundation::CFRetained;
 use objc2_core_media::{
@@ -94,7 +94,7 @@ define_class!(
     unsafe impl NSObjectProtocol for AudioOutput {}
 
     unsafe impl SCStreamOutput for AudioOutput {
-        #[optional]
+        #[allow(non_snake_case)] // ObjC selector-derived name
         #[unsafe(method(stream:didOutputSampleBuffer:ofType:))]
         unsafe fn stream_didOutputSampleBuffer_ofType(
             &self,
@@ -112,7 +112,7 @@ define_class!(
 impl AudioOutput {
     fn new(sink: AudioSink) -> Retained<AudioOutput> {
         let this = AudioOutput::alloc().set_ivars(AudioOutputIvars { sink });
-        unsafe { msg_send![super(&this), init] }
+        unsafe { msg_send![super(this), init] }
     }
 }
 
@@ -216,8 +216,7 @@ fn handle_sample(sink: &AudioSink, sample_buffer: &CMSampleBuffer) {
 
 fn run(wav_path: PathBuf, stop_rx: mpsc::Receiver<()>) -> Result<()> {
     let content = fetch_shareable_content()?;
-    let display = content
-        .displays()
+    let display = unsafe { content.displays() }
         .firstObject()
         .ok_or_else(|| anyhow!("no displays available for system audio capture"))?;
 
@@ -253,7 +252,7 @@ fn run(wav_path: PathBuf, stop_rx: mpsc::Receiver<()>) -> Result<()> {
 
     let output = AudioOutput::new(sink.clone());
     let queue = DispatchQueue::new("dolly.system-audio", None);
-    let output_proto: &ProtocolObject<dyn SCStreamOutput> = ProtocolObject::from_ref(&output);
+    let output_proto: &ProtocolObject<dyn SCStreamOutput> = ProtocolObject::from_ref(&*output);
     unsafe {
         stream
             .addStreamOutput_type_sampleHandlerQueue_error(
