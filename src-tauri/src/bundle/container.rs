@@ -85,6 +85,16 @@ pub fn pack_recording(staging_dir: &Path, dest: &Path) -> Result<()> {
         add_file_entry(&mut writer, &mic_path, names::MIC_AUDIO, media_file_options())?;
     }
 
+    let system_audio_path = staging_dir.join(names::SYSTEM_AUDIO);
+    if system_audio_path.exists() {
+        add_file_entry(
+            &mut writer,
+            &system_audio_path,
+            names::SYSTEM_AUDIO,
+            media_file_options(),
+        )?;
+    }
+
     writer
         .finish()
         .with_context(|| format!("finishing zip archive at {}", dest.display()))?;

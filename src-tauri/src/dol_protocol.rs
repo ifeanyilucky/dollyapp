@@ -52,7 +52,7 @@ pub fn media_url(bundle_path: &Path, entry: &str) -> String {
 fn mime_type(entry: &str) -> &'static str {
     match entry {
         names::SCREEN_VIDEO => "video/quicktime",
-        names::MIC_AUDIO => "audio/wav",
+        names::MIC_AUDIO | names::SYSTEM_AUDIO => "audio/wav",
         names::META | names::CURSOR | names::PROJECT => "application/json",
         _ => "application/octet-stream",
     }

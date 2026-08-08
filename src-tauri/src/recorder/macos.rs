@@ -355,6 +355,9 @@ pub async fn discard(app: &AppHandle, state: &RecorderState) -> Result<()> {
     if let Some(mic) = active.mic {
         let _ = mic.stop();
     }
+    if let Some(system_audio) = active.system_audio {
+        let _ = system_audio.stop();
+    }
     let _ = cursor::stop_on_main_thread(app).await;
 
     if let Err(e) = std::fs::remove_dir_all(&active.staging_dir) {

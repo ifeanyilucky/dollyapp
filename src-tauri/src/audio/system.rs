@@ -129,7 +129,7 @@ fn handle_sample(sink: &AudioSink, sample_buffer: &CMSampleBuffer) {
     let Some(format_desc) = (unsafe { sample_buffer.format_description() }) else {
         return;
     };
-    let asbd = unsafe { CMAudioFormatDescriptionGetStreamBasicDescription(&*format_desc) };
+    let asbd = unsafe { CMAudioFormatDescriptionGetStreamBasicDescription(&format_desc) };
     if asbd.is_null() {
         return;
     }

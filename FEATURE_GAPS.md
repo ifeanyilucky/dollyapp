@@ -26,22 +26,19 @@ Dolly is pre-alpha but the editor core is unusually complete for its stage:
 
 ## P0 — blocks the core promise
 
-### System audio capture — MISSING
+### System audio capture — DONE
 Screen Studio, Loom, Cap, CleanShot X, CursorClip, ScreenKite all capture system
-audio. Dolly hardcodes `has_system_audio: false`
-(`src-tauri/src/recorder/macos.rs:240`) and the capture module explicitly defers
-it: "needs a hand-rolled `SCStream`" (`src-tauri/src/capture/mod.rs:12-18`,
-`src-tauri/src/encode/mod.rs:12-13`, `src-tauri/src/audio/mod.rs:1-4`).
-`system.wav` is declared in the bundle schema (`src-tauri/src/bundle/mod.rs:39`)
-but never written. Without this, Dolly cannot make audio tutorials.
+audio; Dolly now does too. A dedicated audio-only `SCStream` (`SCStreamOutput`
+type `.Audio`) writes `system.wav` alongside `mic.wav`
+(`src-tauri/src/audio/system.rs`, `SystemAudioRecorder`), `has_system_audio`
+is wired through `RecordingMeta`/the `.dol` packer, and the source picker has a
+live System audio toggle (`frontend/src/recorder/SourcePickerBar.tsx`). Mic and
+system audio stay as separate WAV tracks the editor can mix/drop at export time.
 
-Work required:
-- A hand-rolled `SCStream` (ScreenCaptureKit) capturing screen video + system
-  audio channels together, in addition to the existing scap-based
-  `FrameGrabber` path.
-- Mix mic + system audio into `system.wav` at stop (or keep separate tracks).
-- Wire `has_system_audio` in `RecordingMeta` and expose a toggle in the
-  source picker (`frontend/src/recorder/SourcePickerBar.tsx`).
+Remaining (small):
+- Surface the system audio track in the editor (it's written, packed, and
+  servable over `dol://` as `audio/wav`, but not yet exposed in the UI).
+- Volume mixing/normalization (P2 anyway).
 
 ### Native Rust export pipeline — MISSING
 `src-tauri/src/export/mod.rs` is a 7-line stub ("Not built yet — this is M3").
