@@ -91,6 +91,69 @@ describe("generateZoomKeyframes", () => {
     expect(after.startT).toEqual(dip.endT);
     expect(after.endT - before.startT).toBeGreaterThanOrEqual(7.8e6);
   });
+
+  it("plans a wider cluster more zoomed-out for a vertical output", () => {
+    // A cluster that spreads ~250px horizontally — the width of a tall 9:16
+    // crop of a 1920x1080 source is only ~607px at level 1, so the same
+    // spread fills far more of a vertical viewport than it would of the
+    // full 1920px-wide source. The vertical plan must therefore zoom OUT
+    // (lower level) to keep the cursor framed.
+    const t = track({
+      events: [
+        { kind: "leftDown", t: 1_000_000, x: 200, y: 400 },
+        { kind: "leftDown", t: 2_000_000, x: 450, y: 400 },
+      ],
+    });
+    const sourceFrame = { width: 1920, height: 1080 };
+
+    const landscape = generateZoomKeyframes(t);
+    const vertical = generateZoomKeyframes(t, { factor: 1 }, {
+      sourceFrame,
+      outputAspect: 9 / 16,
+    });
+
+    expect(landscape).toHaveLength(1);
+    expect(vertical).toHaveLength(1);
+    // Vertical reframing shrinks the level-1 width to ~31% of the source,
+    // so the same horizontal spread must resolve to a lower zoom level.
+    expect(vertical[0].level).toBeLessThan(landscape[0].level);
+  });
+
+  it("leaves same-aspect planning identical to the legacy behavior", () => {
+    const t = track({
+      events: [
+        { kind: "leftDown", t: 1_000_000, x: 200, y: 400 },
+        { kind: "leftDown", t: 3_000_000, x: 450, y: 640 },
+      ],
+    });
+
+    const legacy = generateZoomKeyframes(t);
+    const sameAspect = generateZoomKeyframes(t, { factor: 1 }, {
+      sourceFrame: { width: 1920, height: 1080 },
+      outputAspect: 1920 / 1080,
+    });
+
+    expect(sameAspect).toEqual(legacy);
+  });
+
+  it("does not zoom deeper than the vertical viewport can show a tight cluster", () => {
+    // A tight cluster (only ~20px of spread) maps to the 2.0x ceiling either
+    // way — but the vertical crop is inherently narrower, so the level must
+    // never exceed the shared ceiling or bottom out below the floor.
+    const t = track({
+      events: [
+        { kind: "leftDown", t: 1_000_000, x: 950, y: 530 },
+        { kind: "leftDown", t: 3_000_000, x: 970, y: 550 },
+      ],
+    });
+
+    const vertical = generateZoomKeyframes(t, { factor: 1 }, {
+      sourceFrame: { width: 1920, height: 1080 },
+      outputAspect: 9 / 16,
+    });
+    expect(vertical[0].level).toBeGreaterThanOrEqual(1.4);
+    expect(vertical[0].level).toBeLessThanOrEqual(3.0);
+  });
 });
 
 describe("viewportForKeyframe", () => {
