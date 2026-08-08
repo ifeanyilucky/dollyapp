@@ -96,10 +96,18 @@ Screen Studio generates on-device transcripts (Apple Speech Recognition) and
 shows them as captions. Loom/Cap auto-transcribe with chapters and summaries.
 Dolly: no transcript/subtitle/caption code at all.
 
-### Video import + drag & drop — MISSING
+### Video import + drag & drop — DONE
 Screen Studio creates projects from any `.mp4`/`.mov`, with drag & drop onto the
-editor or tray icon. Dolly opens only its own `.dol` bundles; no import, no
-file-drop handling. Cheap to add once the bundle reader accepts foreign media.
+editor or tray icon. Dolly now does too: a foreign video is imported as a real
+`.dol` recording bundle — geometry/duration/fps read via AVFoundation
+(`src-tauri/src/import.rs`, `read_video_metadata`), then staged, packed, and
+named like a normal recording (numeric-suffix dedup, `import_video_into`
+unit-tested end-to-end with a real `AVAssetWriter` encode). Drag & drop onto the
+main window plus an "Import video…" file-picker affordance live in
+`frontend/src/App.tsx` (window-wide `onDragDropEvent` overlay) and the folder
+dropdown's "Import video…" item (`frontend/src/editor/TopBar.tsx`); the new
+bundle is opened in the editor via `importVideo` (`frontend/src/editor/api.ts`).
+Tray-icon drag & drop is not built.
 
 ## P2 — polish / product decisions
 
